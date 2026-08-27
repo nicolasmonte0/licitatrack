@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LicitaTrack</title>
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <!-- React + Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:system-ui,-apple-system,sans-serif;background:#F1F5F9}
+    ::-webkit-scrollbar{width:6px;height:6px}
+    ::-webkit-scrollbar-track{background:#F1F5F9}
+    ::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:3px}
+    input:focus,select:focus,textarea:focus{border-color:#2563EB!important;box-shadow:0 0 0 3px rgba(37,99,235,.12)!important;outline:none}
+    button:active{transform:scale(.97)}
+    @keyframes slideIn{from{transform:translateY(10px);opacity:0}to{transform:translateY(0);opacity:1}}
+    @keyframes fadeIn{from{opacity:0}to{transform:translateY(0);opacity:1}}
+    @keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     PASSO 1 — COLE AQUI AS CREDENCIAIS DO SEU PROJETO FIREBASE
+     ► console.firebase.google.com → Configurações do projeto → Seus apps → Web
+     ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+const FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyBLIEql90vc_KqDCbTyflRKJEbWrC-fSjo",
+  authDomain:        "licitatrack.firebaseapp.com",
+  projectId:         "licitatrack",
+  storageBucket:     "licitatrack.firebasestorage.app",
+  messagingSenderId: "459723534294",
+  appId:             "1:459723534294:web:2e4ccc95565c6ef0c3be77"
+};
+
+window.IS_CFG = FIREBASE_CONFIG.projectId !== "COLE_AQUI";
+if (window.IS_CFG) {
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    window._db = firebase.firestore();
+  } catch(e) { window.IS_CFG = false; console.error(e); }
+}
+</script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+const db        = window._db;
+const IS_CFG    = window.IS_CFG;
+const COL       = "pedidos";
+
+// ─── CONFIG ────────────────────────────────────────────────────────────────
+const STATUSES = [
+  { id:"pendente",  label:"Pendente",     emoji:"⏳", dot:"#94A3B8", bg:"#F8FAFC", border:"#CBD5E1", col:"#475569", badge:"#64748B" },
+  { id:"confeccao", label:"Em Confecção", emoji:"⚙️", dot:"#FBBF24", bg:"#FFFBEB", border:"#FCD34D", col:"#92400E", badge:"#D97706" },
+  { id:"entrega",   label:"Em Entrega",   emoji:"🚚", dot:"#60A5FA", bg:"#EFF6FF", border:"#93C5FD", col:"#1E40AF", badge:"#2563EB" },
+  { id:"entregue",  label:"Entregue",     emoji:"✅", dot:"#34D399", bg:"#ECFDF5", border:"#6EE7B7", col:"#065F46", badge:"#059669" },
+];
+const PRIORITIES = [
+  { id:"urgente", label:"Urgente", color:"#DC2626", bg:"#FEE2E2" },
+  { id:"alta",    label:"Alta",    color:"#EA580C", bg:"#FFF7ED" },
+  { id:"media",   label:"Média",   color:"#D97706", bg:"#FFFBEB" },
+  { id:"baixa",   label:"Baixa",   color:"#16A34A", bg:"#F0FDF4" },
+];
+const NEXT = { pendente:"confeccao", confeccao:"entrega", entrega:"entregue", entregue:null };
+const PREV = { pendente:null, confeccao:"pendente", entrega:"confeccao", entregue:"entrega" };
+
+// ─── UTILS ─────────────────────────────────────────────────────────────────
+function uid()         { return "PED-" + Date.now().toString().slice(-7); }
+function todayStr()    { return new Date().toISOString().slice(0,10); }
+function formatDate(s) { return s ? new Date(s+"T12:00:00").toLocaleDateString("pt-BR") : "—"; }
+function formatDT(s)   { if(!s) return "—"; const d=new Date(s); return d.toLocaleDateString("pt-BR")+" "+d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}); }
+function formatBRL(v)  { if(!v&&v!==0) return "—"; return Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"}); }
+function daysLeft(p)   { return p?Math.ceil((new Date(p+"T12:00:00")-new Date())/86400000):null; }
+function isOverdue(o)  { return o.prazo&&new Date(o.prazo+"T12:00:00")<new Date()&&o.status!=="entregue"; }
+function pushHistory(order, acao, detalhes) {
+  return { ...order, historico:[...(order.historico||[]),{data:new Date().toISOString(),acao,detalhes}] };
+}
+
+const inp = { width:"100%", padding:"9px 12px", border:"1.5px solid #D1D5DB", borderRadius:7, fontSize:13.5, fontFamily:"inherit", background:"#FAFAFA", color:"#1E293B", transition:"border .15s,box-shadow .15s" };
+
+// ─── SETUP SCREEN ──────────────────────────────────────────────────────────
+function SetupScreen() {
+  const steps = [
+    { n:"1", title:"Crie o projeto Firebase", desc:<>Acesse <a href="https://console.firebase.google.com" target="_blank" style={{color:"#2563EB"}}>console.firebase.google.com</a>, clique em <strong>"Criar projeto"</strong>, dê um nome (ex: licitatrack) e confirme.</> },
+    { n:"2", title:"Ative o Firestore", desc:<>No menu lateral clique em <strong>Firestore Database → Criar banco de dados</strong>. Escolha <strong>"Modo de teste"</strong> e selecione a região <strong>southamerica-east1</strong>.</> },
+    { n:"3", title:"Registre o app Web", desc:<>Vá em <strong>⚙️ Configurações do projeto → Seus apps → &lt;/&gt; Web</strong>. Dê um apelido e clique em <strong>"Registrar app"</strong>.</> },
+    { n:"4", title:"Copie as credenciais", desc:<>Copie o objeto <strong>firebaseConfig</strong> que aparecer (apiKey, projectId etc.).</> },
+    { n:"5", title:"Cole no arquivo HTML", desc:<>Abra o <strong>licitatrack.html</strong> em qualquer editor de texto e substitua os valores <strong>"COLE_AQUI"</strong> pelas suas credenciais.</> },
+    { n:"6", title:"Suba no GitHub Pages", desc:<>Crie um repositório público em <a href="https://github.com" target="_blank" style={{color:"#2563EB"}}>github.com</a>, faça upload do arquivo como <strong>index.html</strong> e ative <strong>Settings → Pages</strong>.</> },
+  ];
+  return (
+    <div style={{minHeight:"100vh",background:"#F1F5F9",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{background:"#fff",borderRadius:16,padding:36,maxWidth:560,width:"100%",boxShadow:"0 8px 40px rgba(0,0,0,.12)"}}>
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{fontSize:48,marginBottom:8}}>🔥</div>
+          <h1 style={{fontSize:22,fontWeight:800,color:"#1E293B",marginBottom:6}}>Configure o Firebase</h1>
+          <p style={{color:"#64748B",fontSize:14}}>Siga os passos abaixo para conectar o LicitaTrack à nuvem.</p>
+        </div>
+        {steps.map(s=>(
+          <div key={s.n} style={{display:"flex",gap:14,marginBottom:18,alignItems:"flex-start"}}>
+            <div style={{width:30,height:30,borderRadius:"50%",background:"#1E3A5F",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:14,flexShrink:0}}>{s.n}</div>
+            <div>
+              <div style={{fontWeight:700,fontSize:14,color:"#1E293B",marginBottom:2}}>{s.title}</div>
+              <div style={{fontSize:13,color:"#475569",lineHeight:1.5}}>{s.desc}</div>
+            </div>
+          </div>
+        ))}
+        <div style={{marginTop:24,background:"#F8FAFC",borderRadius:10,padding:14,border:"1px solid #E2E8F0"}}>
+          <div style={{fontSize:12.5,fontWeight:700,color:"#374151",marginBottom:6}}>Exemplo de configuração no arquivo HTML:</div>
+          <pre style={{fontSize:11.5,color:"#475569",lineHeight:1.6,overflow:"auto"}}>{`const FIREBASE_CONFIG = {
+  apiKey:            "AIzaSy...",
+  authDomain:        "licitatrack.firebaseapp.com",
+  projectId:         "licitatrack",
+  storageBucket:     "licitatrack.appspot.com",
+  messagingSenderId: "123456789",
+  appId:             "1:123..."
+};`}</pre>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── APP ───────────────────────────────────────────────────────────────────
+function App() {
+  const [orders,     setOrders]     = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [connErr,    setConnErr]    = useState(null);
+  const [modal,      setModal]      = useState(null);
+  const [form,       setForm]       = useState({});
+  const [detailId,   setDetailId]   = useState(null);
+  const [search,     setSearch]     = useState("");
+  const [fStat,      setFStat]      = useState("all");
+  const [fPrio,      setFPrio]      = useState("all");
+  const [toast,      setToast]      = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [showSum,    setShowSum]    = useState(false);
+  const [saving,     setSaving]     = useState(false);
+  const fileRef = useRef(null);
+
+  // ── Real-time Firestore listener ──────────────────────────────────────
+  useEffect(() => {
+    if (!IS_CFG) { setLoading(false); return; }
+    const unsub = db.collection(COL)
+      .orderBy("criadoEm","asc")
+      .onSnapshot(
+        snap => {
+          setOrders(snap.docs.map(d => d.data()));
+          setLoading(false);
+          setConnErr(null);
+        },
+        err => { setConnErr(err.message); setLoading(false); }
+      );
+    return unsub;
+  }, []);
+
+  // ── Daily summary ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!loading && orders.length >= 0) {
+      if (localStorage.getItem("lt-summary") !== todayStr()) {
+        setShowSum(true);
+        localStorage.setItem("lt-summary", todayStr());
+      }
+    }
+  }, [loading]);
+
+  // ── Firebase helpers ──────────────────────────────────────────────────
+  async function fbSet(order) {
+    setSaving(true);
+    try { await db.collection(COL).doc(order.id).set(order); }
+    catch(e) { flash("Erro ao salvar: "+e.message,"err"); }
+    finally { setSaving(false); }
+  }
+  async function fbDel(id) {
+    try { await db.collection(COL).doc(id).delete(); }
+    catch(e) { flash("Erro ao excluir: "+e.message,"err"); }
+  }
+
+  function flash(msg, type="ok") { setToast({msg,type}); setTimeout(()=>setToast(null),3000); }
+
+  // ── CRUD ─────────────────────────────────────────────────────────────
+  function openAdd() {
+    setForm({numero:"",cliente:"",descricao:"",quantidade:"",valor:"",prazo:"",status:"pendente",prioridade:"media",responsavel:"",observacoes:""});
+    setModal("add");
+  }
+  function openEdit(o)   { setForm({...o}); setModal("edit"); }
+  function openDetail(o) { setDetailId(o.id); setModal("detail"); }
+
+  async function handleSave() {
+    if (!form.cliente?.trim()||!form.descricao?.trim()) { flash("Preencha Cliente e Descrição!","err"); return; }
+    let updated;
+    if (modal==="add") {
+      updated = pushHistory({...form,id:uid(),criadoEm:new Date().toISOString(),historico:[]},"Criado","Pedido adicionado ao sistema");
+      flash("Pedido criado!");
+    } else {
+      const old = orders.find(o=>o.id===form.id)||{};
+      const ch = [];
+      if(old.status    !==form.status)    ch.push(`Status: ${STATUSES.find(s=>s.id===old.status)?.label} → ${STATUSES.find(s=>s.id===form.status)?.label}`);
+      if(old.prazo     !==form.prazo)     ch.push("Prazo alterado");
+      if(old.valor     !==form.valor)     ch.push("Valor alterado");
+      if(old.prioridade!==form.prioridade)ch.push("Prioridade alterada");
+      if(old.responsavel!==form.responsavel)ch.push("Responsável alterado");
+      updated = pushHistory({...form},"Editado",ch.length?ch.join(" · "):"Campos atualizados");
+      flash("Pedido atualizado!");
+    }
+    await fbSet(updated);
+    setModal(null);
+  }
+
+  async function handleDelete(id) {
+    await fbDel(id);
+    setModal(null); setConfirmDel(null); flash("Pedido removido.","info");
+  }
+
+  async function handleStatus(id, s) {
+    const o = orders.find(x=>x.id===id);
+    const fl = STATUSES.find(x=>x.id===o.status)?.label;
+    const tl = STATUSES.find(x=>x.id===s)?.label;
+    await fbSet(pushHistory({...o,status:s},"Status alterado",`${fl} → ${tl}`));
+    flash(`Status → ${tl}`);
+  }
+
+  // ── Exports ───────────────────────────────────────────────────────────
+  function exportCSV() {
+    const h = ["ID","Nº Processo","Cliente","Descrição","Qtd","Valor (R$)","Prazo","Status","Prioridade","Responsável","Observações","Criado em"];
+    const rows = orders.map(o=>[
+      o.id,o.numero||"",o.cliente,o.descricao,o.quantidade||"",o.valor||"",
+      o.prazo?formatDate(o.prazo):"",
+      STATUSES.find(s=>s.id===o.status)?.label||o.status,
+      PRIORITIES.find(p=>p.id===o.prioridade)?.label||o.prioridade,
+      o.responsavel||"",o.observacoes||"",
+      new Date(o.criadoEm).toLocaleDateString("pt-BR")
+    ].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(","));
+    const csv = "\uFEFF"+[h.join(","),...rows].join("\n");
+    const a = Object.assign(document.createElement("a"),{href:URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8;"})),download:`pedidos-${todayStr()}.csv`});
+    a.click(); flash("CSV exportado!");
+  }
+
+  function exportPDF() {
+    const totalVal = orders.reduce((s,o)=>s+(Number(o.valor)||0),0);
+    const atrasados = orders.filter(o=>isOverdue(o));
+    const grouped = STATUSES.map(s=>({...s,items:orders.filter(o=>o.status===s.id),total:orders.filter(o=>o.status===s.id).reduce((s,o)=>s+(Number(o.valor)||0),0)}));
+    const win = window.open("","_blank");
+    win.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Relatório LicitaTrack</title>
+    <style>body{font-family:Arial,sans-serif;font-size:11px;color:#1E293B;margin:24px;line-height:1.4}
+    h1{color:#1E3A5F;font-size:18px;margin-bottom:4px}.sub{color:#64748B;font-size:11px;margin-bottom:18px}
+    .sr{display:flex;gap:10px;margin-bottom:20px}.sb{border:1px solid #e2e8f0;border-radius:6px;padding:8px 14px;text-align:center;flex:1}
+    .sn{font-size:20px;font-weight:800;color:#1E3A5F}.sl{font-size:10px;color:#64748B}
+    h2{font-size:13px;margin:18px 0 6px;padding:5px 10px;border-radius:5px}
+    table{width:100%;border-collapse:collapse;margin-bottom:16px}
+    th{background:#F1F5F9;text-align:left;padding:6px 8px;font-size:10px;color:#475569;border-bottom:1px solid #E2E8F0}
+    td{padding:6px 8px;border-bottom:1px solid #F8FAFC;font-size:10.5px;vertical-align:top}
+    .ov{color:#DC2626;font-weight:700}.ft{margin-top:24px;padding-top:8px;border-top:1px solid #E2E8F0;color:#94A3B8;font-size:9px}
+    @media print{body{margin:0}}</style></head><body>
+    <h1>📋 LicitaTrack — Relatório de Pedidos</h1>
+    <div class="sub">Gerado em ${new Date().toLocaleString("pt-BR")} &nbsp;·&nbsp; Total: <strong>${formatBRL(totalVal)}</strong>${atrasados.length?` &nbsp;·&nbsp; <span style="color:#DC2626">⚠️ ${atrasados.length} atrasado${atrasados.length>1?"s":""}</span>`:""}</div>
+    <div class="sr">${STATUSES.map(s=>`<div class="sb"><div class="sn">${orders.filter(o=>o.status===s.id).length}</div><div class="sl">${s.emoji} ${s.label}</div></div>`).join("")}<div class="sb" style="background:#FEF2F2"><div class="sn" style="color:#DC2626">${atrasados.length}</div><div class="sl">⚠️ Atrasados</div></div></div>
+    ${grouped.filter(g=>g.items.length>0).map(g=>`<h2 style="background:${g.bg};color:${g.col}">${g.emoji} ${g.label} (${g.items.length}) · ${formatBRL(g.total)}</h2>
+    <table><thead><tr><th>Nº</th><th>Cliente</th><th>Descrição</th><th>Qtd</th><th>Valor</th><th>Prazo</th><th>Prioridade</th><th>Responsável</th></tr></thead><tbody>
+    ${g.items.map(o=>`<tr><td>${o.numero||o.id}</td><td><strong>${o.cliente}</strong></td><td>${o.descricao}</td><td>${o.quantidade||"—"}</td><td>${o.valor?formatBRL(o.valor):"—"}</td><td class="${isOverdue(o)?"ov":""}">${formatDate(o.prazo)}${isOverdue(o)?" ⚠️":""}</td><td>${PRIORITIES.find(p=>p.id===o.prioridade)?.label||o.prioridade}</td><td>${o.responsavel||"—"}</td></tr>`).join("")}
+    </tbody></table>`).join("")}
+    <div class="ft">LicitaTrack · Firebase · ${new Date().toLocaleString("pt-BR")}</div>
+    <script>setTimeout(()=>window.print(),400);<\/script></body></html>`);
+    win.document.close();
+  }
+
+  async function downloadBackup() {
+    const snap = await db.collection(COL).get();
+    const all = snap.docs.map(d=>d.data());
+    const a = Object.assign(document.createElement("a"),{href:URL.createObjectURL(new Blob([JSON.stringify({versao:"firebase-v1",exportadoEm:new Date().toISOString(),pedidos:all},null,2)],{type:"application/json"})),download:`backup-${todayStr()}.json`});
+    a.click(); flash("Backup salvo!");
+  }
+
+  async function handleRestore(e) {
+    const file = e.target.files[0]; if(!file) return;
+    const text = await file.text();
+    try {
+      const data = JSON.parse(text);
+      const list = Array.isArray(data)?data:data.pedidos;
+      if(!Array.isArray(list)) throw new Error();
+      const batch = db.batch();
+      list.forEach(o => batch.set(db.collection(COL).doc(o.id), o));
+      await batch.commit();
+      flash(`${list.length} pedidos restaurados!`);
+    } catch { flash("Arquivo inválido!","err"); }
+    e.target.value="";
+  }
+
+  // ── Filter & stats ────────────────────────────────────────────────────
+  const q = search.toLowerCase();
+  const filtered = orders.filter(o =>
+    (fStat==="all"||o.status===fStat)&&
+    (fPrio==="all"||o.prioridade===fPrio)&&
+    (!q||[o.cliente,o.descricao,o.numero,o.id,o.responsavel].some(f=>f?.toLowerCase().includes(q)))
+  );
+  const stat = {
+    total:    orders.length,
+    pendente: orders.filter(o=>o.status==="pendente").length,
+    confeccao:orders.filter(o=>o.status==="confeccao").length,
+    entrega:  orders.filter(o=>o.status==="entrega").length,
+    entregue: orders.filter(o=>o.status==="entregue").length,
+    atrasados:orders.filter(o=>isOverdue(o)).length,
+    totalVal: orders.reduce((s,o)=>s+(Number(o.valor)||0),0),
+  };
+  const detailOrder = detailId ? orders.find(o=>o.id===detailId) : null;
+
+  if (!IS_CFG) return <SetupScreen />;
+
+  if (loading) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",flexDirection:"column",gap:14,background:"#F1F5F9"}}>
+      <div style={{width:38,height:38,border:"4px solid #E2E8F0",borderTopColor:"#1E3A5F",borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+      <p style={{color:"#64748B",fontSize:14}}>Conectando ao Firebase…</p>
+    </div>
+  );
+
+  if (connErr) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",flexDirection:"column",gap:12,background:"#FEF2F2",padding:24}}>
+      <div style={{fontSize:44}}>⚠️</div>
+      <h2 style={{color:"#DC2626",fontSize:18}}>Erro de conexão</h2>
+      <p style={{color:"#475569",fontSize:13,maxWidth:420,textAlign:"center"}}>{connErr}</p>
+      <p style={{color:"#64748B",fontSize:12}}>Verifique as credenciais no arquivo HTML e as regras do Firestore.</p>
+      <button onClick={()=>location.reload()} style={{padding:"9px 20px",background:"#1E3A5F",color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontWeight:700}}>Tentar novamente</button>
+    </div>
+  );
+
+  return (
+    <div style={{minHeight:"100vh",background:"#F1F5F9"}}>
+
+      {/* ── HEADER ── */}
+      <header style={{background:"linear-gradient(135deg,#1E3A5F,#162f4d)",color:"#fff",padding:"0 18px",height:56,display:"flex",alignItems:"center",justifyContent:"space-between",boxShadow:"0 2px 12px rgba(0,0,0,.22)",position:"sticky",top:0,zIndex:200}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:22}}>📋</span>
+          <div>
+            <div style={{fontWeight:800,fontSize:16,letterSpacing:"-.4px"}}>LicitaTrack</div>
+            <div style={{fontSize:10,opacity:.65,marginTop:-1,display:"flex",alignItems:"center",gap:4}}>
+              <span style={{width:6,height:6,background:"#34D399",borderRadius:"50%",display:"inline-block"}}/>
+              Conectado ao Firebase · Tempo real
+            </div>
+          </div>
+        </div>
+        {saving && <div style={{fontSize:12,color:"rgba(255,255,255,.7)",marginRight:6}}>💾 salvando…</div>}
+        <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+          {stat.atrasados>0&&<div style={{background:"#DC2626",color:"#fff",borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700}}>⚠️ {stat.atrasados} atrasado{stat.atrasados>1?"s":""}</div>}
+          <Btn sm ghost onClick={()=>setShowSum(true)}>📅 Resumo</Btn>
+          <Btn sm ghost onClick={exportCSV}>📊 CSV</Btn>
+          <Btn sm ghost onClick={exportPDF}>🖨️ PDF</Btn>
+          <Btn sm ghost onClick={downloadBackup}>💾 Backup</Btn>
+          <Btn sm ghost onClick={()=>fileRef.current?.click()}>📂 Restaurar</Btn>
+          <Btn onClick={openAdd}>+ Novo Pedido</Btn>
+          <input ref={fileRef} type="file" accept=".json" onChange={handleRestore} style={{display:"none"}}/>
+        </div>
+      </header>
+
+      {/* ── STATS ── */}
+      <div style={{padding:"14px 18px 0",display:"flex",gap:9,overflowX:"auto"}}>
+        {[
+          {label:"Total",        val:stat.total,     color:"#1E3A5F", bg:"#fff",    icon:"📦", key:"all"},
+          {label:"Pendentes",    val:stat.pendente,  color:"#64748B", bg:"#F8FAFC", icon:"⏳", key:"pendente"},
+          {label:"Em Confecção", val:stat.confeccao, color:"#D97706", bg:"#FFFBEB", icon:"⚙️", key:"confeccao"},
+          {label:"Em Entrega",   val:stat.entrega,   color:"#2563EB", bg:"#EFF6FF", icon:"🚚", key:"entrega"},
+          {label:"Entregues",    val:stat.entregue,  color:"#059669", bg:"#ECFDF5", icon:"✅", key:"entregue"},
+        ].map(s=>(
+          <button key={s.key} onClick={()=>setFStat(fStat===s.key?"all":s.key)}
+            style={{background:s.bg,border:`2px solid ${fStat===s.key?s.color:"transparent"}`,borderRadius:10,padding:"9px 14px",cursor:"pointer",textAlign:"center",minWidth:105,flex:"0 0 auto",transition:"border .15s"}}>
+            <div style={{fontSize:20}}>{s.icon}</div>
+            <div style={{fontSize:21,fontWeight:800,color:s.color,lineHeight:1.1}}>{s.val}</div>
+            <div style={{fontSize:11,color:"#64748B",marginTop:2}}>{s.label}</div>
+          </button>
+        ))}
+        <div style={{background:"#fff",borderRadius:10,padding:"9px 14px",textAlign:"center",minWidth:128,flex:"0 0 auto",border:"2px solid transparent"}}>
+          <div style={{fontSize:20}}>💰</div>
+          <div style={{fontSize:14,fontWeight:800,color:"#1E3A5F",lineHeight:1.2,marginTop:2}}>{formatBRL(stat.totalVal)}</div>
+          <div style={{fontSize:11,color:"#64748B",marginTop:2}}>Valor Total</div>
+        </div>
+      </div>
+
+      {/* ── TOOLBAR ── */}
+      <div style={{padding:"10px 18px",display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
+        <input placeholder="🔍  Buscar por cliente, pedido, responsável…" value={search}
+          onChange={e=>setSearch(e.target.value)}
+          style={{...inp,flex:"1 1 200px",minWidth:180,background:"#fff",padding:"8px 13px",fontSize:13}}/>
+        <select value={fStat} onChange={e=>setFStat(e.target.value)} style={{...inp,width:"auto",cursor:"pointer",padding:"8px 11px",background:"#fff"}}>
+          <option value="all">Todos os status</option>
+          {STATUSES.map(s=><option key={s.id} value={s.id}>{s.emoji} {s.label}</option>)}
+        </select>
+        <select value={fPrio} onChange={e=>setFPrio(e.target.value)} style={{...inp,width:"auto",cursor:"pointer",padding:"8px 11px",background:"#fff"}}>
+          <option value="all">Todas as prioridades</option>
+          {PRIORITIES.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
+        </select>
+        {(search||fStat!=="all"||fPrio!=="all")&&<button onClick={()=>{setSearch("");setFStat("all");setFPrio("all");}} style={{padding:"8px 13px",background:"#FEE2E2",color:"#DC2626",border:"none",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:700}}>✕</button>}
+        <span style={{marginLeft:"auto",fontSize:12,color:"#94A3B8",whiteSpace:"nowrap"}}>{filtered.length}/{orders.length} pedido{orders.length!==1?"s":""}</span>
+      </div>
+
+      {/* ── KANBAN ── */}
+      <div style={{padding:"0 18px 36px",display:"flex",gap:13,overflowX:"auto",alignItems:"flex-start"}}>
+        {STATUSES.map(status=>{
+          const col = filtered.filter(o=>o.status===status.id);
+          const colVal = col.reduce((s,o)=>s+(Number(o.valor)||0),0);
+          return (
+            <div key={status.id} style={{flex:"0 0 268px"}}>
+              <div style={{background:status.bg,border:`1.5px solid ${status.border}`,borderRadius:"10px 10px 0 0",padding:"9px 12px"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:7}}>
+                    <span style={{width:8,height:8,borderRadius:"50%",background:status.dot,display:"inline-block"}}/>
+                    <span style={{fontWeight:700,fontSize:13,color:status.col}}>{status.emoji} {status.label}</span>
+                  </div>
+                  <span style={{background:status.badge,color:"#fff",borderRadius:12,padding:"2px 9px",fontSize:12,fontWeight:700}}>{col.length}</span>
+                </div>
+                {colVal>0&&<div style={{fontSize:11,color:status.col,opacity:.8,marginTop:3,paddingLeft:15}}>{formatBRL(colVal)}</div>}
+              </div>
+              <div style={{background:"#E2E8F0",borderRadius:"0 0 10px 10px",padding:"7px 6px",minHeight:90,display:"flex",flexDirection:"column",gap:7}}>
+                {col.length===0
+                  ?<div style={{textAlign:"center",padding:"26px 0",color:"#94A3B8",fontSize:13}}>Nenhum pedido</div>
+                  :col.map(o=>(
+                    <OrderCard key={o.id} order={o}
+                      onDetail={()=>openDetail(o)} onEdit={()=>openEdit(o)}
+                      onDelete={()=>setConfirmDel(o.id)}
+                      onNext={()=>NEXT[o.status]&&handleStatus(o.id,NEXT[o.status])}
+                      onPrev={()=>PREV[o.status]&&handleStatus(o.id,PREV[o.status])}
+                    />
+                  ))
+                }
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* modals */}
+      {showSum&&<Overlay onClose={()=>setShowSum(false)}><DailySummary orders={orders} onClose={()=>setShowSum(false)}/></Overlay>}
+
+      {(modal==="add"||modal==="edit")&&(
+        <Overlay onClose={()=>setModal(null)}>
+          <div style={{background:"#fff",borderRadius:14,padding:26,width:510,maxWidth:"95vw",maxHeight:"94vh",overflowY:"auto",boxShadow:"0 28px 80px rgba(0,0,0,.3)",animation:"fadeIn .2s ease"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+              <h2 style={{fontSize:17,color:"#1E293B",fontWeight:800}}>{modal==="add"?"➕ Novo Pedido":"✏️ Editar Pedido"}</h2>
+              <button onClick={()=>setModal(null)} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#94A3B8"}}>✕</button>
+            </div>
+            <FormBody form={form} setForm={setForm}/>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:20,paddingTop:16,borderTop:"1px solid #F1F5F9"}}>
+              <button onClick={()=>setModal(null)} style={{padding:"10px 20px",background:"#F1F5F9",border:"none",borderRadius:8,cursor:"pointer",fontSize:14,color:"#475569",fontWeight:600}}>Cancelar</button>
+              <button onClick={handleSave} style={{padding:"10px 22px",background:"#1E3A5F",color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontSize:14,fontWeight:800}}>
+                {modal==="add"?"Criar Pedido":"Salvar Alterações"}
+              </button>
+            </div>
+          </div>
+        </Overlay>
+      )}
+
+      {modal==="detail"&&detailOrder&&(
+        <Overlay onClose={()=>setModal(null)}>
+          <DetailPanel order={detailOrder} onClose={()=>setModal(null)} onEdit={()=>openEdit(detailOrder)} onDelete={()=>setConfirmDel(detailOrder.id)}/>
+        </Overlay>
+      )}
+
+      {confirmDel&&(
+        <Overlay onClose={()=>setConfirmDel(null)}>
+          <div style={{background:"#fff",borderRadius:14,padding:32,maxWidth:360,textAlign:"center",boxShadow:"0 24px 70px rgba(0,0,0,.3)",animation:"fadeIn .2s ease"}}>
+            <div style={{fontSize:44,marginBottom:10}}>🗑️</div>
+            <h3 style={{fontSize:18,color:"#1E293B",marginBottom:8}}>Excluir pedido?</h3>
+            <p style={{color:"#64748B",fontSize:14,marginBottom:22}}>Será removido da nuvem permanentemente.</p>
+            <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+              <button onClick={()=>setConfirmDel(null)} style={{padding:"10px 22px",background:"#F1F5F9",border:"none",borderRadius:8,cursor:"pointer",fontWeight:600}}>Cancelar</button>
+              <button onClick={()=>handleDelete(confirmDel)} style={{padding:"10px 22px",background:"#DC2626",color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontWeight:800}}>Excluir</button>
+            </div>
+          </div>
+        </Overlay>
+      )}
+
+      {toast&&(
+        <div style={{position:"fixed",bottom:22,right:22,zIndex:9999,background:toast.type==="err"?"#DC2626":toast.type==="info"?"#475569":"#059669",color:"#fff",padding:"12px 20px",borderRadius:10,fontSize:14,fontWeight:600,boxShadow:"0 6px 28px rgba(0,0,0,.22)",animation:"slideIn .2s ease"}}>
+          {toast.type==="err"?"⚠️":toast.type==="info"?"ℹ️":"✅"} {toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── DAILY SUMMARY ─────────────────────────────────────────────────────────
+function DailySummary({ orders, onClose }) {
+  const atrasados = orders.filter(o=>isOverdue(o));
+  const vencem7   = orders.filter(o=>{ const d=daysLeft(o.prazo); return d!==null&&d>=0&&d<=7&&o.status!=="entregue"; });
+  const allHist   = orders.flatMap(o=>(o.historico||[]).map(h=>({...h,cliente:o.cliente}))).sort((a,b)=>new Date(b.data)-new Date(a.data)).slice(0,8);
+  const totalVal  = orders.reduce((s,o)=>s+(Number(o.valor)||0),0);
+  const valEnt    = orders.filter(o=>o.status==="entregue").reduce((s,o)=>s+(Number(o.valor)||0),0);
+
+  return (
+    <div style={{background:"#fff",borderRadius:14,padding:26,width:520,maxWidth:"95vw",maxHeight:"90vh",overflowY:"auto",boxShadow:"0 28px 80px rgba(0,0,0,.3)",animation:"fadeIn .2s ease"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+        <div>
+          <h2 style={{fontSize:18,color:"#1E293B",fontWeight:800}}>📅 Resumo do Dia</h2>
+          <div style={{fontSize:12,color:"#94A3B8",marginTop:1}}>{new Date().toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
+        </div>
+        <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#94A3B8"}}>✕</button>
+      </div>
+      <div style={{display:"flex",gap:9,marginBottom:18}}>
+        {[{l:"TOTAL EM CARTEIRA",v:formatBRL(totalVal),c:"#1E40AF",bg:"#EFF6FF"},{l:"JÁ ENTREGUE",v:formatBRL(valEnt),c:"#065F46",bg:"#ECFDF5"},{l:"EM ANDAMENTO",v:formatBRL(totalVal-valEnt),c:"#92400E",bg:"#FFFBEB"}].map(s=>(
+          <div key={s.l} style={{flex:1,background:s.bg,borderRadius:9,padding:"11px 13px",textAlign:"center"}}>
+            <div style={{fontSize:10.5,color:s.c,fontWeight:700,marginBottom:3}}>{s.l}</div>
+            <div style={{fontSize:15,fontWeight:800,color:s.c,lineHeight:1.2}}>{s.v}</div>
+          </div>
+        ))}
+      </div>
+      {atrasados.length>0&&<SumSection title={`⚠️ Atrasados (${atrasados.length})`} color="#DC2626" bg="#FEF2F2">{atrasados.map(o=><SumRow key={o.id} label={o.cliente} sub={o.descricao} tag={`venceu ${formatDate(o.prazo)}`} tc="#DC2626" tb="#FEE2E2"/>)}</SumSection>}
+      {vencem7.filter(o=>daysLeft(o.prazo)<=3).length>0&&<SumSection title="🔴 Vencem em até 3 dias" color="#EA580C" bg="#FFF7ED">{vencem7.filter(o=>daysLeft(o.prazo)<=3).map(o=><SumRow key={o.id} label={o.cliente} sub={o.descricao} tag={`${daysLeft(o.prazo)}d restante${daysLeft(o.prazo)!==1?"s":""}`} tc="#EA580C" tb="#FFF7ED"/>)}</SumSection>}
+      {vencem7.filter(o=>daysLeft(o.prazo)>3).length>0&&<SumSection title="🟡 Vencem esta semana" color="#D97706" bg="#FFFBEB">{vencem7.filter(o=>daysLeft(o.prazo)>3).map(o=><SumRow key={o.id} label={o.cliente} sub={o.descricao} tag={`${daysLeft(o.prazo)} dias`} tc="#D97706" tb="#FFFBEB"/>)}</SumSection>}
+      {atrasados.length===0&&vencem7.length===0&&<div style={{background:"#ECFDF5",borderRadius:9,padding:"13px 16px",color:"#065F46",fontSize:13.5,fontWeight:600,marginBottom:16,textAlign:"center"}}>✅ Nenhum pedido atrasado ou vencendo em breve!</div>}
+      {allHist.length>0&&<SumSection title="🕐 Últimas Movimentações">{allHist.map((h,i)=>(
+        <div key={i} style={{display:"flex",gap:10,padding:"7px 12px",borderBottom:"1px solid #F8FAFC",alignItems:"flex-start"}}>
+          <div style={{fontSize:11,color:"#94A3B8",whiteSpace:"nowrap",minWidth:108}}>{formatDT(h.data)}</div>
+          <div style={{flex:1}}><div style={{fontSize:12.5,fontWeight:600,color:"#1E293B"}}>{h.cliente}</div><div style={{fontSize:11.5,color:"#64748B"}}><span style={{fontWeight:600,color:"#2563EB"}}>{h.acao}:</span> {h.detalhes}</div></div>
+        </div>
+      ))}</SumSection>}
+      <button onClick={onClose} style={{width:"100%",padding:"11px",background:"#1E3A5F",color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontSize:14,fontWeight:700,marginTop:4}}>Fechar e ir para o painel</button>
+    </div>
+  );
+}
+function SumSection({title,color="#374151",bg="#F8FAFC",children}){return(<div style={{marginBottom:14}}><div style={{fontSize:12.5,fontWeight:700,color,background:bg,borderRadius:"8px 8px 0 0",padding:"7px 12px"}}>{title}</div><div style={{background:"#FAFAFA",borderRadius:"0 0 8px 8px",border:"1px solid #F1F5F9",borderTop:"none"}}>{children}</div></div>);}
+function SumRow({label,sub,tag,tc,tb}){return(<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 12px",borderBottom:"1px solid #F1F5F9"}}><div><div style={{fontSize:13,fontWeight:600,color:"#1E293B"}}>{label}</div><div style={{fontSize:11.5,color:"#64748B"}}>{sub}</div></div><span style={{fontSize:11,background:tb,color:tc,borderRadius:6,padding:"2px 8px",fontWeight:700,whiteSpace:"nowrap",marginLeft:10}}>{tag}</span></div>);}
+
+// ─── ORDER CARD ─────────────────────────────────────────────────────────────
+function OrderCard({order,onDetail,onEdit,onDelete,onNext,onPrev}){
+  const p=PRIORITIES.find(x=>x.id===order.prioridade)||PRIORITIES[2];
+  const ov=isOverdue(order); const dl=daysLeft(order.prazo);
+  return(
+    <div onClick={onDetail} style={{background:"#fff",borderRadius:9,padding:"11px 12px",boxShadow:"0 1px 4px rgba(0,0,0,.07)",border:ov?"1.5px solid #FCA5A5":"1.5px solid #F1F5F9",cursor:"pointer",transition:"box-shadow .15s,transform .1s"}}
+      onMouseEnter={e=>{e.currentTarget.style.boxShadow="0 5px 18px rgba(0,0,0,.13)";e.currentTarget.style.transform="translateY(-1px)";}}
+      onMouseLeave={e=>{e.currentTarget.style.boxShadow="0 1px 4px rgba(0,0,0,.07)";e.currentTarget.style.transform="translateY(0)";}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+        <span style={{fontSize:11,color:"#94A3B8",fontWeight:600}}>{order.numero||order.id}</span>
+        <span style={{fontSize:11,background:p.bg,color:p.color,borderRadius:5,padding:"2px 7px",fontWeight:700}}>{p.label}</span>
+      </div>
+      <div style={{fontWeight:700,fontSize:13,color:"#1E293B",marginBottom:2,lineHeight:1.3}}>{order.cliente}</div>
+      <div style={{fontSize:12,color:"#475569",marginBottom:6,lineHeight:1.4}}>{order.descricao}</div>
+      <div style={{display:"flex",gap:9,flexWrap:"wrap",marginBottom:5}}>
+        {order.quantidade&&<span style={{fontSize:11,color:"#64748B"}}>📦 {Number(order.quantidade).toLocaleString("pt-BR")}</span>}
+        {order.valor&&<span style={{fontSize:11,color:"#059669",fontWeight:600}}>{formatBRL(order.valor)}</span>}
+        {order.prazo&&<span style={{fontSize:11,color:ov?"#DC2626":dl!==null&&dl<=3?"#EA580C":"#64748B",fontWeight:ov?700:400}}>📅 {formatDate(order.prazo)}{ov?" ⚠️":dl!==null&&dl<=3?` (${dl}d)`:""}</span>}
+      </div>
+      {order.responsavel&&<div style={{fontSize:11,color:"#64748B",marginBottom:4}}>👤 {order.responsavel}</div>}
+      {order.observacoes&&<div style={{fontSize:11,color:"#64748B",background:"#F8FAFC",borderRadius:5,padding:"4px 7px",marginBottom:6,borderLeft:"3px solid #CBD5E1",fontStyle:"italic",lineHeight:1.4}}>{order.observacoes.slice(0,80)}{order.observacoes.length>80?"…":""}</div>}
+      <div style={{display:"flex",gap:5,justifyContent:"space-between",alignItems:"center",borderTop:"1px solid #F1F5F9",paddingTop:7}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",gap:4}}>
+          {PREV[order.status]&&<button onClick={onPrev} style={{padding:"3px 9px",background:"#F1F5F9",border:"none",borderRadius:5,cursor:"pointer",fontSize:13,color:"#64748B"}}>←</button>}
+          {NEXT[order.status]&&<button onClick={onNext} style={{padding:"3px 10px",background:"#EFF6FF",border:"none",borderRadius:5,cursor:"pointer",fontSize:12,color:"#2563EB",fontWeight:700}}>→ Avançar</button>}
+        </div>
+        <div style={{display:"flex",gap:4}}>
+          <button onClick={onEdit}   style={{padding:"3px 8px",background:"#F8FAFC",border:"1px solid #E2E8F0",borderRadius:5,cursor:"pointer",fontSize:13}}>✏️</button>
+          <button onClick={onDelete} style={{padding:"3px 8px",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:5,cursor:"pointer",fontSize:13}}>🗑️</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── DETAIL PANEL ───────────────────────────────────────────────────────────
+function DetailPanel({order,onClose,onEdit,onDelete}){
+  const [tab,setTab]=useState("info");
+  const p=PRIORITIES.find(x=>x.id===order.prioridade)||PRIORITIES[2];
+  const s=STATUSES.find(x=>x.id===order.status);
+  const ov=isOverdue(order);
+  const hist=[...(order.historico||[])].reverse();
+  return(
+    <div style={{background:"#fff",borderRadius:14,width:455,maxWidth:"95vw",maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 28px 80px rgba(0,0,0,.3)",animation:"fadeIn .2s ease"}}>
+      <div style={{padding:"20px 22px 0",borderBottom:"1px solid #F1F5F9"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+          <div><div style={{fontSize:11,color:"#94A3B8",fontWeight:600,marginBottom:2}}>{order.numero||order.id}</div><div style={{fontSize:16,fontWeight:800,color:"#1E293B",lineHeight:1.3}}>{order.cliente}</div><div style={{fontSize:13,color:"#475569",marginTop:2}}>{order.descricao}</div></div>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#94A3B8",flexShrink:0}}>✕</button>
+        </div>
+        <div style={{display:"flex"}}>
+          {["info","historico"].map(t=>(
+            <button key={t} onClick={()=>setTab(t)} style={{padding:"7px 16px",background:"none",border:"none",borderBottom:tab===t?"2.5px solid #1E3A5F":"2.5px solid transparent",cursor:"pointer",fontSize:13,color:tab===t?"#1E3A5F":"#94A3B8",fontWeight:tab===t?700:400,transition:"color .15s"}}>
+              {t==="info"?"📋 Detalhes":`🕐 Histórico${hist.length>0?` (${hist.length})`:""}`}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:"14px 22px"}}>
+        {tab==="info"
+          ?[{l:"Status",v:`${s?.emoji} ${s?.label}`},{l:"Prioridade",v:p.label,pc:p.color},{l:"Quantidade",v:order.quantidade?Number(order.quantidade).toLocaleString("pt-BR")+" unid.":"—"},{l:"Valor",v:order.valor?formatBRL(order.valor):"—",pc:"#059669"},{l:"Prazo",v:formatDate(order.prazo),warn:ov},{l:"Responsável",v:order.responsavel||"—"},{l:"Observações",v:order.observacoes||"—"},{l:"Criado em",v:formatDT(order.criadoEm)}].map(r=>(
+            <div key={r.l} style={{display:"flex",gap:12,padding:"8px 0",borderBottom:"1px solid #F8FAFC",alignItems:"flex-start"}}>
+              <span style={{fontSize:12,color:"#94A3B8",fontWeight:600,minWidth:100,flexShrink:0}}>{r.l}</span>
+              <span style={{fontSize:13.5,color:r.warn?"#DC2626":r.pc||"#1E293B",fontWeight:r.warn?700:r.pc?600:400,lineHeight:1.5}}>{r.v}</span>
+            </div>
+          ))
+          :hist.length===0
+            ?<div style={{textAlign:"center",padding:"32px 0",color:"#94A3B8",fontSize:13}}>Sem histórico.</div>
+            :hist.map((h,i)=>(
+              <div key={i} style={{display:"flex",gap:12,padding:"9px 0",borderBottom:"1px solid #F8FAFC",alignItems:"flex-start"}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:h.acao==="Criado"?"#059669":h.acao==="Status alterado"?"#2563EB":"#D97706",flexShrink:0,marginTop:5}}/>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}>
+                    <span style={{fontSize:12.5,fontWeight:700,color:"#1E293B"}}>{h.acao}</span>
+                    <span style={{fontSize:11,color:"#94A3B8"}}>{formatDT(h.data)}</span>
+                  </div>
+                  <div style={{fontSize:12.5,color:"#475569"}}>{h.detalhes}</div>
+                </div>
+              </div>
+            ))
+        }
+      </div>
+      <div style={{display:"flex",gap:8,padding:"13px 22px",borderTop:"1px solid #F1F5F9"}}>
+        <button onClick={onDelete} style={{padding:"9px 14px",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,cursor:"pointer",fontSize:13,color:"#DC2626",fontWeight:600}}>🗑️ Excluir</button>
+        <button onClick={onEdit}   style={{flex:1,padding:"9px 14px",background:"#1E3A5F",color:"#fff",border:"none",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:800}}>✏️ Editar</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── FORM ───────────────────────────────────────────────────────────────────
+function FormBody({form,setForm}){
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:13}}>
+      <Field label="Nº do Processo / Licitação"><input value={form.numero||""} onChange={e=>set("numero",e.target.value)} placeholder="Ex: LIC-2026/007" style={inp}/></Field>
+      <Field label="Cliente / Órgão Público *"><input value={form.cliente||""} onChange={e=>set("cliente",e.target.value)} placeholder="Nome do cliente ou secretaria" style={inp}/></Field>
+      <Field label="Descrição do Item / Lote *"><textarea value={form.descricao||""} onChange={e=>set("descricao",e.target.value)} placeholder="Descreva o pedido ou lote" rows={3} style={{...inp,resize:"vertical"}}/></Field>
+      <div style={{display:"flex",gap:12}}>
+        <Field label="Quantidade" style={{flex:1}}><input type="number" value={form.quantidade||""} onChange={e=>set("quantidade",e.target.value)} placeholder="0" style={inp}/></Field>
+        <Field label="Valor da Licitação (R$)" style={{flex:1}}><input type="number" value={form.valor||""} onChange={e=>set("valor",e.target.value)} placeholder="0,00" style={inp}/></Field>
+      </div>
+      <div style={{display:"flex",gap:12}}>
+        <Field label="Prazo de Entrega" style={{flex:1}}><input type="date" value={form.prazo||""} onChange={e=>set("prazo",e.target.value)} style={inp}/></Field>
+        <Field label="Responsável / Fornecedor" style={{flex:1}}><input value={form.responsavel||""} onChange={e=>set("responsavel",e.target.value)} placeholder="Quem está confeccionando" style={inp}/></Field>
+      </div>
+      <div style={{display:"flex",gap:12}}>
+        <Field label="Status" style={{flex:1}}><select value={form.status||"pendente"} onChange={e=>set("status",e.target.value)} style={{...inp,cursor:"pointer"}}>{STATUSES.map(s=><option key={s.id} value={s.id}>{s.emoji} {s.label}</option>)}</select></Field>
+        <Field label="Prioridade" style={{flex:1}}><select value={form.prioridade||"media"} onChange={e=>set("prioridade",e.target.value)} style={{...inp,cursor:"pointer"}}>{PRIORITIES.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}</select></Field>
+      </div>
+      <Field label="Observações"><textarea value={form.observacoes||""} onChange={e=>set("observacoes",e.target.value)} placeholder="Anotações relevantes…" rows={2} style={{...inp,resize:"vertical"}}/></Field>
+    </div>
+  );
+}
+
+function Field({label,children,style}){return(<div style={style}><label style={{fontSize:12.5,fontWeight:700,color:"#374151",marginBottom:5,display:"block"}}>{label}</label>{children}</div>);}
+function Overlay({onClose,children}){return(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:16}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>{children}</div>);}
+function Btn({children,onClick,sm,ghost}){return(<button onClick={onClick} style={{background:ghost?"rgba(255,255,255,.13)":"#2563EB",color:"#fff",border:ghost?"1px solid rgba(255,255,255,.25)":"none",borderRadius:7,padding:sm?"5px 9px":"8px 16px",cursor:"pointer",fontWeight:700,fontSize:sm?11.5:13.5,whiteSpace:"nowrap"}}>{children}</button>);}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
