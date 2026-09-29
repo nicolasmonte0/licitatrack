@@ -277,6 +277,10 @@ function tidy(s) {
 }
 function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 function sumVal(list) { return list.reduce((s, o) => s + (Number(o.valor) || 0), 0); }
+function hasCusto(o) { return o.custo !== undefined && o.custo !== null && o.custo !== ""; }
+function custoTotal(o) { return (Number(o.custo) || 0) + (Number(o.frete) || 0) + (Number(o.despesas) || 0); }
+function lucro(o) { return (Number(o.valor) || 0) - custoTotal(o); }
+function margem(o) { const v = Number(o.valor) || 0; return v > 0 ? (lucro(o) / v) * 100 : null; }
 function byPrazo(a, b) {
   if (!a.prazo && !b.prazo) return 0;
   if (!a.prazo) return 1;
@@ -344,7 +348,7 @@ function App() {
   }
 
   function openAdd() {
-    setForm({ numero: "", cliente: "", descricao: "", quantidade: "", valor: "", prazo: "", status: "proposta", prioridade: "media", responsavel: "", observacoes: "" });
+    setForm({ numero: "", cliente: "", descricao: "", quantidade: "", valor: "", custo: "", frete: "", despesas: "", prazo: "", status: "proposta", prioridade: "media", responsavel: "", observacoes: "" });
     setModal("add");
   }
   function openEdit(o) { setForm({ ...o }); setModal("edit"); }
@@ -368,6 +372,7 @@ function App() {
       if (old.prioridade !== form.prioridade) ch.push("Prioridade alterada");
       if (old.responsavel !== form.responsavel) ch.push("Responsável alterado");
       if (old.observacoes !== form.observacoes) ch.push("Observações alteradas");
+      if (old.custo !== form.custo || old.frete !== form.frete || old.despesas !== form.despesas) ch.push("Custos atualizados");
       updated = pushHistory({ ...form }, "Editado", ch.length ? ch.join(" · ") : "Campos atualizados");
       flash("Pedido atualizado.");
     }
@@ -385,9 +390,11 @@ function App() {
   }
 
   function exportCSV() {
-    const h = ["ID", "Nº Processo", "Cliente", "Descrição", "Qtd", "Valor (R$)", "Prazo", "Etapa", "Prioridade", "Responsável", "Observações", "Criado em"];
+    const h = ["ID", "Nº Processo", "Cliente", "Descrição", "Qtd", "Valor (R$)", "Custo (R$)", "Frete (R$)", "Outras despesas (R$)", "Lucro (R$)", "Margem (%)", "Prazo", "Etapa", "Prioridade", "Responsável", "Observações", "Criado em"];
     const rows = orders.map(o => [
       o.id, o.numero || "", o.cliente, o.descricao, o.quantidade || "", o.valor || "",
+      o.custo || "", o.frete || "", o.despesas || "",
+      hasCusto(o) ? lucro(o).toFixed(2) : "", hasCusto(o) && margem(o) !== null ? margem(o).toFixed(1) : "",
       o.prazo ? formatDate(o.prazo) : "", stageLabel(o.status),
       (PRIORITIES.find(p => p.id === o.prioridade) || {}).label || o.prioridade || "",
       o.responsavel || "", o.observacoes || "", o.criadoEm ? new Date(o.criadoEm).toLocaleDateString("pt-BR") : ""
@@ -408,13 +415,16 @@ function App() {
         return "<tr><td>" + esc(o.numero || o.id) + "</td><td><b>" + esc(o.cliente) + "</b></td><td>" + esc(tidy(o.descricao)) +
           "</td><td class='r'>" + esc(o.quantidade ? Number(o.quantidade).toLocaleString("pt-BR") : "—") +
           "</td><td class='r'>" + esc(o.valor ? formatBRL(o.valor) : "—") +
+          "</td><td class='r" + (hasCusto(o) && lucro(o) < 0 ? " late" : "") + "'>" + esc(hasCusto(o) ? formatBRL(lucro(o)) : "—") +
           "</td><td class='" + (late ? "late" : "") + "'>" + esc(formatDate(o.prazo)) +
           "</td><td>" + esc(o.observacoes ? tidy(o.observacoes) : "—") + "</td></tr>";
       }).join("");
       return "<div class='sec-h'><h4>" + s.label + "</h4><span>" + items.length + (items.length === 1 ? " pedido" : " pedidos") + "</span>" +
         (v > 0 ? "<span>" + formatBRL(v) + "</span>" : "") + "</div>" +
-        "<table><thead><tr><th>Nº</th><th>Cliente</th><th>Descrição</th><th class='r'>Qtd</th><th class='r'>Valor</th><th>Prazo</th><th>Observações</th></tr></thead><tbody>" + rows + "</tbody></table>";
+        "<table><thead><tr><th>Nº</th><th>Cliente</th><th>Descrição</th><th class='r'>Qtd</th><th class='r'>Valor</th><th class='r'>Lucro</th><th>Prazo</th><th>Observações</th></tr></thead><tbody>" + rows + "</tbody></table>";
     }).join("");
+    const comCustoPDF = orders.filter(hasCusto);
+    const lucroTotalPDF = comCustoPDF.reduce((s, o) => s + lucro(o), 0);
     const html = "<!DOCTYPE html><html lang='pt-BR'><head><meta charset='UTF-8'><title>Relatório de pedidos — Novari Print</title>" +
       "<link href='https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap' rel='stylesheet'>" +
       "<style>@page{margin:14mm}*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
@@ -438,7 +448,9 @@ function App() {
       "<div class='sr'><div><span class='n'>" + orders.length + "</span><span class='t'>pedidos</span></div>" +
       "<div><span class='n'>" + formatBRL(sumVal(orders)) + "</span><span class='t'>em carteira</span></div>" +
       "<div class='" + (lateN ? "bad" : "") + "'><span class='n'>" + lateN + "</span><span class='t'>atrasados</span></div>" +
-      "<div><span class='n'>" + orders.filter(o => o.status === "entregue").length + "</span><span class='t'>entregues</span></div></div>" +
+      "<div><span class='n'>" + orders.filter(o => o.status === "entregue").length + "</span><span class='t'>entregues</span></div>" +
+      (comCustoPDF.length > 0 ? "<div class='" + (lucroTotalPDF < 0 ? "bad" : "") + "'><span class='n'>" + formatBRL(lucroTotalPDF) + "</span><span class='t'>lucro (" + comCustoPDF.length + " pedidos)</span></div>" : "") +
+      "</div>" +
       sections +
       "<div class='pf'><span>Novari Print</span><span>Gerado pelo LicitaTrack</span></div>" +
       "<script>window.addEventListener('load',function(){setTimeout(function(){window.print()},300)})<\/script></body></html>";
@@ -639,6 +651,13 @@ function OrderCard({ o, stage, onOpen, onEdit, onDel, onNext, onPrev }) {
           {o.valor && <span className="money">{formatBRL(o.valor)}</span>}
         </div>
       )}
+      {hasCusto(o) && (
+        <div className="meta">
+          <span style={{ color: lucro(o) < 0 ? "var(--alert)" : "var(--ok)", fontWeight: 600 }}>
+            Lucro {formatBRL(lucro(o))}{margem(o) !== null ? " (" + margem(o).toFixed(0) + "%)" : ""}
+          </span>
+        </div>
+      )}
       {o.responsavel && <div className="meta"><span><Ic n="user" />{o.responsavel}</span></div>}
       {due && <div className={"due " + due.k}><Ic n={due.k === "late" ? "alert" : "calendar"} /><span>{due.t}</span>{due.r && <em>{due.r}</em>}</div>}
       {o.observacoes && <p className="obs">{tidy(o.observacoes)}</p>}
@@ -665,6 +684,12 @@ function DetailPanel({ o, onClose, onEdit, onDelete }) {
     ["Prioridade", pr ? pr.label : "—"],
     ["Quantidade", o.quantidade ? Number(o.quantidade).toLocaleString("pt-BR") + " un." : "—"],
     ["Valor", o.valor ? formatBRL(o.valor) : "—"],
+    ...(hasCusto(o) ? [
+      ["Custo de produção", formatBRL(o.custo)],
+      ["Frete", o.frete ? formatBRL(o.frete) : "—"],
+      ["Outras despesas", o.despesas ? formatBRL(o.despesas) : "—"],
+      ["Lucro", formatBRL(lucro(o)) + (margem(o) !== null ? " (" + margem(o).toFixed(1) + "%)" : ""), lucro(o) < 0],
+    ] : []),
     ["Prazo", due ? due.t + (due.r ? " (" + due.r + ")" : "") : "—", due && due.k === "late"],
     ["Responsável", o.responsavel || "—"],
     ["Observações", o.observacoes || "—"],
@@ -716,6 +741,9 @@ function DailySummary({ orders, onClose }) {
   const hist = orders.flatMap(o => (o.historico || []).map(h => ({ ...h, cliente: o.cliente }))).sort((a, b) => new Date(b.data) - new Date(a.data)).slice(0, 6);
   const total = sumVal(orders);
   const ent = sumVal(orders.filter(o => o.status === "entregue"));
+  const comCusto = orders.filter(hasCusto);
+  const lucroTotal = comCusto.reduce((s, o) => s + lucro(o), 0);
+  const margemMedia = comCusto.length ? comCusto.reduce((s, o) => s + (margem(o) || 0), 0) / comCusto.length : null;
   const rest = (list, cls, icon, title, tag) => list.length > 0 && (
     <div className={"ss " + cls}>
       <h4><Ic n={icon} />{title} ({list.length})</h4>
@@ -742,6 +770,11 @@ function DailySummary({ orders, onClose }) {
           <div><span className="n">{formatBRL(ent)}</span><span className="t">já entregue</span></div>
           <div><span className="n">{formatBRL(total - ent)}</span><span className="t">em andamento</span></div>
         </div>
+        {comCusto.length > 0 && (
+          <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, background: "var(--col)", fontSize: 13, color: "var(--ink-2)" }}>
+            <b style={{ fontWeight: 600, color: "var(--ink)" }}>Lucratividade</b> — {comCusto.length} de {orders.length} pedidos com custo informado · Lucro total: <b style={{ color: lucroTotal < 0 ? "var(--alert)" : "var(--ok)" }}>{formatBRL(lucroTotal)}</b>{margemMedia !== null ? " · Margem média: " + margemMedia.toFixed(1) + "%" : ""}
+          </div>
+        )}
         {rest(late, "bad", "alert", "Atrasados", o => "venceu em " + formatDate(o.prazo))}
         {rest(soon3, "soon", "clock", "Vencem em até 3 dias", o => { const d = dayDiff(o.prazo); return d === 0 ? "hoje" : d === 1 ? "amanhã" : "em " + d + " dias"; })}
         {rest(week, "", "calendar", "Vencem esta semana", o => "em " + dayDiff(o.prazo) + " dias")}
@@ -775,6 +808,20 @@ function FormBody({ form, setForm }) {
       <div className="row2">
         <Field label="Quantidade"><input className="inp" type="number" value={form.quantidade || ""} onChange={e => set("quantidade", e.target.value)} placeholder="0" /></Field>
         <Field label="Valor da licitação (R$)"><input className="inp" type="number" step="0.01" value={form.valor || ""} onChange={e => set("valor", e.target.value)} placeholder="0,00" /></Field>
+      </div>
+      <div className="row2">
+        <Field label="Custo de produção (R$)"><input className="inp" type="number" step="0.01" value={form.custo || ""} onChange={e => set("custo", e.target.value)} placeholder="Opcional" /></Field>
+        <Field label="Frete (R$)"><input className="inp" type="number" step="0.01" value={form.frete || ""} onChange={e => set("frete", e.target.value)} placeholder="Opcional" /></Field>
+      </div>
+      <div className="row2">
+        <Field label="Outras despesas (R$)"><input className="inp" type="number" step="0.01" value={form.despesas || ""} onChange={e => set("despesas", e.target.value)} placeholder="Opcional" /></Field>
+        {hasCusto(form) && (
+          <Field label="Lucro estimado">
+            <div className="inp" style={{ background: "var(--col)", color: lucro(form) < 0 ? "var(--alert)" : "var(--ok)", fontWeight: 600, display: "flex", alignItems: "center" }}>
+              {formatBRL(lucro(form))}{margem(form) !== null ? " · " + margem(form).toFixed(1) + "%" : ""}
+            </div>
+          </Field>
+        )}
       </div>
       <div className="row2">
         <Field label="Prazo de entrega"><input className="inp" type="date" value={form.prazo || ""} onChange={e => set("prazo", e.target.value)} /></Field>
