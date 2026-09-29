@@ -22,7 +22,7 @@
   --line:#DFE3EA; --line-strong:#C8CFDB;
   --brand:#14213D; --brand-ink:#FFFFFF; --accent:#0F6E8C;
   --alert:#B42318; --alert-bg:#FEF1EF; --alert-solid:#B42318; --warn:#A54A08; --ok:#067647;
-  --s1:#CBD2DE; --s2:#93A0BA; --s3:#566B94; --s4:#14213D;
+  --s0:#E6D9C3; --s1:#CBD2DE; --s2:#93A0BA; --s3:#566B94; --s4:#14213D;
 }
 @media (prefers-color-scheme: dark){
   :root{
@@ -31,7 +31,7 @@
     --line:#252E46; --line-strong:#34405C;
     --brand:#E8ECF5; --brand-ink:#0D1322; --accent:#5CC3E0;
     --alert:#FF8F80; --alert-bg:#3A1B18; --warn:#F2B25A; --ok:#5BD29A;
-    --s1:#34405C; --s2:#55648A; --s3:#8497C4; --s4:#E8ECF5;
+    --s0:#4A3E2A; --s1:#34405C; --s2:#55648A; --s3:#8497C4; --s4:#E8ECF5;
   }
 }
 *,*::before,*::after{box-sizing:border-box}
@@ -202,7 +202,8 @@ const COL = "pedidos";
 
 /* ---------- Configuração ---------- */
 const STAGES = [
-  { id:"pendente",  label:"Pendente",     icon:"clock",   act:"Iniciar confecção",    next:"confeccao", prev:null,        sw:"var(--s1)" },
+  { id:"proposta",  label:"Proposta Comercial", icon:"quote",   act:"Aprovar e iniciar produção", next:"pendente",  prev:null,        sw:"var(--s0)" },
+  { id:"pendente",  label:"Pendente",     icon:"clock",   act:"Iniciar confecção",    next:"confeccao", prev:"proposta",  sw:"var(--s1)" },
   { id:"confeccao", label:"Em confecção", icon:"printer", act:"Enviar para entrega",  next:"entrega",   prev:"pendente",  sw:"var(--s2)" },
   { id:"entrega",   label:"Em entrega",   icon:"truck",   act:"Marcar como entregue", next:"entregue",  prev:"confeccao", sw:"var(--s3)" },
   { id:"entregue",  label:"Entregue",     icon:"check",   act:null,                   next:null,        prev:"entrega",   sw:"var(--s4)" },
@@ -224,6 +225,7 @@ const ICONS = {
   check:<><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></>,
   alert:<><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></>,
   file:<><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></>,
+  quote:<><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1"/></>,
   sheet:<><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/></>,
   save:<><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></>,
   upload:<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></>,
@@ -342,7 +344,7 @@ function App() {
   }
 
   function openAdd() {
-    setForm({ numero: "", cliente: "", descricao: "", quantidade: "", valor: "", prazo: "", status: "pendente", prioridade: "media", responsavel: "", observacoes: "" });
+    setForm({ numero: "", cliente: "", descricao: "", quantidade: "", valor: "", prazo: "", status: "proposta", prioridade: "media", responsavel: "", observacoes: "" });
     setModal("add");
   }
   function openEdit(o) { setForm({ ...o }); setModal("edit"); }
@@ -780,7 +782,7 @@ function FormBody({ form, setForm }) {
       </div>
       <div className="row2">
         <Field label="Etapa">
-          <select className="inp" value={form.status || "pendente"} onChange={e => set("status", e.target.value)}>
+          <select className="inp" value={form.status || "proposta"} onChange={e => set("status", e.target.value)}>
             {STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
         </Field>
