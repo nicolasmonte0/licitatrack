@@ -348,7 +348,7 @@ function App() {
   }
 
   function openAdd() {
-    setForm({ numero: "", cliente: "", descricao: "", quantidade: "", valor: "", custo: "", frete: "", despesas: "", prazo: "", status: "proposta", prioridade: "media", responsavel: "", observacoes: "" });
+    setForm({ numero: "", cliente: "", descricao: "", quantidade: "", valorUnit: "", valor: "", custo: "", frete: "", despesas: "", prazo: "", status: "proposta", prioridade: "media", responsavel: "", observacoes: "" });
     setModal("add");
   }
   function openEdit(o) { setForm({ ...o }); setModal("edit"); }
@@ -369,6 +369,7 @@ function App() {
       if (old.prazo !== form.prazo) ch.push("Prazo alterado");
       if (old.valor !== form.valor) ch.push("Valor alterado");
       if (old.quantidade !== form.quantidade) ch.push("Quantidade alterada");
+      if (old.valorUnit !== form.valorUnit) ch.push("Valor do produto alterado");
       if (old.prioridade !== form.prioridade) ch.push("Prioridade alterada");
       if (old.responsavel !== form.responsavel) ch.push("Responsável alterado");
       if (old.observacoes !== form.observacoes) ch.push("Observações alteradas");
@@ -390,9 +391,9 @@ function App() {
   }
 
   function exportCSV() {
-    const h = ["ID", "Nº Processo", "Cliente", "Descrição", "Qtd", "Valor (R$)", "Custo (R$)", "Frete (R$)", "Outras despesas (R$)", "Lucro (R$)", "Margem (%)", "Prazo", "Etapa", "Prioridade", "Responsável", "Observações", "Criado em"];
+    const h = ["ID", "Nº Processo", "Cliente", "Descrição", "Qtd", "Valor do produto (R$)", "Valor (R$)", "Custo (R$)", "Frete (R$)", "Outras despesas (R$)", "Lucro (R$)", "Margem (%)", "Prazo", "Etapa", "Prioridade", "Responsável", "Observações", "Criado em"];
     const rows = orders.map(o => [
-      o.id, o.numero || "", o.cliente, o.descricao, o.quantidade || "", o.valor || "",
+      o.id, o.numero || "", o.cliente, o.descricao, o.quantidade || "", o.valorUnit || "", o.valor || "",
       o.custo || "", o.frete || "", o.despesas || "",
       hasCusto(o) ? lucro(o).toFixed(2) : "", hasCusto(o) && margem(o) !== null ? margem(o).toFixed(1) : "",
       o.prazo ? formatDate(o.prazo) : "", stageLabel(o.status),
@@ -683,6 +684,7 @@ function DetailPanel({ o, onClose, onEdit, onDelete }) {
     ["Etapa", stageLabel(o.status)],
     ["Prioridade", pr ? pr.label : "—"],
     ["Quantidade", o.quantidade ? Number(o.quantidade).toLocaleString("pt-BR") + " un." : "—"],
+    ...(o.valorUnit ? [["Valor do produto", formatBRL(o.valorUnit) + " / un."]] : []),
     ["Valor", o.valor ? formatBRL(o.valor) : "—"],
     ...(hasCusto(o) ? [
       ["Custo de produção", formatBRL(o.custo)],
@@ -800,29 +802,48 @@ function DailySummary({ orders, onClose }) {
 function Field({ label, children }) { return <div className="f"><label>{label}</label>{children}</div>; }
 function FormBody({ form, setForm }) {
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  function setQuantidade(v) {
+    setForm(f => {
+      const next = { ...f, quantidade: v };
+      const q = Number(v) || 0, vu = Number(f.valorUnit) || 0;
+      if (!f.valor && q > 0 && vu > 0) next.valor = (q * vu).toFixed(2);
+      return next;
+    });
+  }
+  function setValorUnit(v) {
+    setForm(f => {
+      const next = { ...f, valorUnit: v };
+      const q = Number(f.quantidade) || 0, vu = Number(v) || 0;
+      if (!f.valor && q > 0 && vu > 0) next.valor = (q * vu).toFixed(2);
+      return next;
+    });
+  }
   return (
     <div className="form">
       <Field label="Nº do processo ou licitação"><input className="inp" value={form.numero || ""} onChange={e => set("numero", e.target.value)} placeholder="Ex.: 60893/2025" /></Field>
       <Field label="Cliente ou órgão público *"><input className="inp" value={form.cliente || ""} onChange={e => set("cliente", e.target.value)} placeholder="Nome do cliente ou secretaria" /></Field>
       <Field label="Descrição do item ou lote *"><textarea className="inp" rows={3} value={form.descricao || ""} onChange={e => set("descricao", e.target.value)} placeholder="Descreva o pedido ou lote" /></Field>
       <div className="row2">
-        <Field label="Quantidade"><input className="inp" type="number" value={form.quantidade || ""} onChange={e => set("quantidade", e.target.value)} placeholder="0" /></Field>
+        <Field label="Quantidade"><input className="inp" type="number" value={form.quantidade || ""} onChange={e => setQuantidade(e.target.value)} placeholder="0" /></Field>
+        <Field label="Valor do produto (R$)"><input className="inp" type="number" step="0.01" value={form.valorUnit || ""} onChange={e => setValorUnit(e.target.value)} placeholder="Opcional · por unidade" /></Field>
+      </div>
+      <div className="row2">
         <Field label="Valor da licitação (R$)"><input className="inp" type="number" step="0.01" value={form.valor || ""} onChange={e => set("valor", e.target.value)} placeholder="0,00" /></Field>
-      </div>
-      <div className="row2">
         <Field label="Custo de produção (R$)"><input className="inp" type="number" step="0.01" value={form.custo || ""} onChange={e => set("custo", e.target.value)} placeholder="Opcional" /></Field>
-        <Field label="Frete (R$)"><input className="inp" type="number" step="0.01" value={form.frete || ""} onChange={e => set("frete", e.target.value)} placeholder="Opcional" /></Field>
       </div>
       <div className="row2">
+        <Field label="Frete (R$)"><input className="inp" type="number" step="0.01" value={form.frete || ""} onChange={e => set("frete", e.target.value)} placeholder="Opcional" /></Field>
         <Field label="Outras despesas (R$)"><input className="inp" type="number" step="0.01" value={form.despesas || ""} onChange={e => set("despesas", e.target.value)} placeholder="Opcional" /></Field>
-        {hasCusto(form) && (
+      </div>
+      {hasCusto(form) && (
+        <div className="row2">
           <Field label="Lucro estimado">
             <div className="inp" style={{ background: "var(--col)", color: lucro(form) < 0 ? "var(--alert)" : "var(--ok)", fontWeight: 600, display: "flex", alignItems: "center" }}>
               {formatBRL(lucro(form))}{margem(form) !== null ? " · " + margem(form).toFixed(1) + "%" : ""}
             </div>
           </Field>
-        )}
-      </div>
+        </div>
+      )}
       <div className="row2">
         <Field label="Prazo de entrega"><input className="inp" type="date" value={form.prazo || ""} onChange={e => set("prazo", e.target.value)} /></Field>
         <Field label="Responsável ou fornecedor"><input className="inp" value={form.responsavel || ""} onChange={e => set("responsavel", e.target.value)} placeholder="Quem está produzindo" /></Field>
