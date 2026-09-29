@@ -201,13 +201,17 @@ const IS_CFG = window.IS_CFG;
 const COL = "pedidos";
 
 /* ---------- Configuração ---------- */
-const STAGES = [
-  { id:"proposta",  label:"Proposta Comercial", icon:"quote",   act:"Aprovar e iniciar produção", next:"pendente",  prev:null,        sw:"var(--s0)" },
-  { id:"pendente",  label:"Pendente",     icon:"clock",   act:"Iniciar confecção",    next:"confeccao", prev:"proposta",  sw:"var(--s1)" },
-  { id:"confeccao", label:"Em confecção", icon:"printer", act:"Enviar para entrega",  next:"entrega",   prev:"pendente",  sw:"var(--s2)" },
-  { id:"entrega",   label:"Em entrega",   icon:"truck",   act:"Marcar como entregue", next:"entregue",  prev:"confeccao", sw:"var(--s3)" },
-  { id:"entregue",  label:"Entregue",     icon:"check",   act:null,                   next:null,        prev:"entrega",   sw:"var(--s4)" },
+const DEFAULT_STAGES = [
+  { id:"proposta",  label:"Proposta Comercial", icon:"quote",   color:"#C9B27C", actLabel:"Aprovar e iniciar produção" },
+  { id:"pendente",  label:"Pendente",           icon:"clock",   color:"#94A0B6", actLabel:"Iniciar confecção" },
+  { id:"confeccao", label:"Em confecção",       icon:"printer", color:"#6B7AA1", actLabel:"Enviar para entrega" },
+  { id:"entrega",   label:"Em entrega",         icon:"truck",   color:"#48577E", actLabel:"Marcar como entregue" },
+  { id:"entregue",  label:"Entregue",           icon:"check",   color:"#14213D", actLabel:"" },
 ];
+const STAGE_PALETTE = ["#C9B27C", "#94A0B6", "#6B7AA1", "#48577E", "#14213D", "#B4534A", "#4F8A6A", "#7A5AA3"];
+const STAGE_ICONS = ["quote", "clock", "printer", "truck", "check", "file", "package", "alert", "user", "calendar"];
+const StagesCtx = React.createContext([]);
+function useStages() { return React.useContext(StagesCtx); }
 const PRIORITIES = [
   { id:"urgente", label:"Urgente" },
   { id:"alta",    label:"Alta" },
@@ -235,6 +239,9 @@ const ICONS = {
   back:<><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></>,
   user:<><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>,
   x:<><path d="M18 6 6 18"/><path d="m6 6 12 12"/></>,
+  settings:<><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></>,
+  up:<polyline points="18 15 12 9 6 15"/>,
+  down:<polyline points="6 9 12 15 18 9"/>,
 };
 function Ic({ n }) {
   return <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">{ICONS[n]}</svg>;
@@ -290,7 +297,7 @@ function byPrazo(a, b) {
 function pushHistory(order, acao, detalhes) {
   return { ...order, historico: [...(order.historico || []), { data: new Date().toISOString(), acao, detalhes }] };
 }
-function stageLabel(id) { const s = STAGES.find(x => x.id === id); return s ? s.label : id; }
+function stageLabel(id, stages) { const s = (stages || DEFAULT_STAGES).find(x => x.id === id); return s ? s.label : id; }
 function download(blob, name) {
   const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: name });
   document.body.appendChild(a); a.click(); a.remove();
@@ -311,7 +318,16 @@ function App() {
   const [confirmDel, setConfirmDel] = useState(null);
   const [showSum, setShowSum] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [stagesRaw, setStagesRaw] = useState(DEFAULT_STAGES);
+  const [showStages, setShowStages] = useState(false);
   const fileRef = useRef(null);
+
+  const stagesFlow = React.useMemo(() => stagesRaw.map((s, i) => ({
+    ...s,
+    next: stagesRaw[i + 1] ? stagesRaw[i + 1].id : null,
+    prev: i > 0 ? stagesRaw[i - 1].id : null,
+    actText: s.actLabel || (stagesRaw[i + 1] ? ("Avançar para " + stagesRaw[i + 1].label) : null),
+  })), [stagesRaw]);
 
   useEffect(() => {
     if (!IS_CFG) { setLoading(false); setConnErr("Não foi possível iniciar o Firebase."); return; }
@@ -321,6 +337,27 @@ function App() {
     );
     return unsub;
   }, []);
+
+  useEffect(() => {
+    if (!IS_CFG) return;
+    const unsub = db.collection("config").doc("stages").onSnapshot(
+      doc => {
+        if (doc.exists && Array.isArray(doc.data().list) && doc.data().list.length) {
+          setStagesRaw(doc.data().list);
+        } else {
+          setStagesRaw(DEFAULT_STAGES);
+          db.collection("config").doc("stages").set({ list: DEFAULT_STAGES, updatedAt: new Date().toISOString() }).catch(() => {});
+        }
+      },
+      () => setStagesRaw(DEFAULT_STAGES)
+    );
+    return unsub;
+  }, []);
+
+  async function saveStages(list) {
+    await db.collection("config").doc("stages").set({ list, updatedAt: new Date().toISOString() });
+    flash("Etapas atualizadas.");
+  }
 
   useEffect(() => {
     if (loading || connErr) return;
@@ -348,7 +385,7 @@ function App() {
   }
 
   function openAdd() {
-    setForm({ numero: "", cliente: "", descricao: "", quantidade: "", valorUnit: "", valor: "", custo: "", frete: "", despesas: "", prazo: "", status: "proposta", prioridade: "media", responsavel: "", observacoes: "" });
+    setForm({ numero: "", cliente: "", descricao: "", quantidade: "", valorUnit: "", valor: "", custo: "", frete: "", despesas: "", prazo: "", status: (stagesRaw[0] || {}).id || "proposta", prioridade: "media", responsavel: "", observacoes: "" });
     setModal("add");
   }
   function openEdit(o) { setForm({ ...o }); setModal("edit"); }
@@ -365,7 +402,7 @@ function App() {
     } else {
       const old = orders.find(o => o.id === form.id) || {};
       const ch = [];
-      if (old.status !== form.status) ch.push("Etapa: " + stageLabel(old.status) + " → " + stageLabel(form.status));
+      if (old.status !== form.status) ch.push("Etapa: " + stageLabel(old.status, stagesRaw) + " → " + stageLabel(form.status, stagesRaw));
       if (old.prazo !== form.prazo) ch.push("Prazo alterado");
       if (old.valor !== form.valor) ch.push("Valor alterado");
       if (old.quantidade !== form.quantidade) ch.push("Quantidade alterada");
@@ -386,8 +423,8 @@ function App() {
     flash("Pedido excluído.");
   }
   async function moveTo(o, to) {
-    await fbSet(pushHistory({ ...o, status: to }, "Etapa alterada", stageLabel(o.status) + " → " + stageLabel(to)));
-    flash("Pedido movido para " + stageLabel(to).toLowerCase() + ".");
+    await fbSet(pushHistory({ ...o, status: to }, "Etapa alterada", stageLabel(o.status, stagesRaw) + " → " + stageLabel(to, stagesRaw)));
+    flash("Pedido movido para " + stageLabel(to, stagesRaw).toLowerCase() + ".");
   }
 
   function exportCSV() {
@@ -396,7 +433,7 @@ function App() {
       o.id, o.numero || "", o.cliente, o.descricao, o.quantidade || "", o.valorUnit || "", o.valor || "",
       o.custo || "", o.frete || "", o.despesas || "",
       hasCusto(o) ? lucro(o).toFixed(2) : "", hasCusto(o) && margem(o) !== null ? margem(o).toFixed(1) : "",
-      o.prazo ? formatDate(o.prazo) : "", stageLabel(o.status),
+      o.prazo ? formatDate(o.prazo) : "", stageLabel(o.status, stagesRaw),
       (PRIORITIES.find(p => p.id === o.prioridade) || {}).label || o.prioridade || "",
       o.responsavel || "", o.observacoes || "", o.criadoEm ? new Date(o.criadoEm).toLocaleDateString("pt-BR") : ""
     ].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(","));
@@ -407,7 +444,7 @@ function App() {
   function exportPDF() {
     const lateN = orders.filter(isOverdue).length;
     const now = new Date();
-    const sections = STAGES.map(s => {
+    const sections = stagesRaw.map(s => {
       const items = orders.filter(o => o.status === s.id).sort(byPrazo);
       if (!items.length) return "";
       const v = sumVal(items);
@@ -490,12 +527,13 @@ function App() {
   );
   const stageList = id => {
     const l = visible.filter(o => o.status === id).sort(byPrazo);
-    return id === "entregue" ? l.reverse() : l;
+    const isTerminal = !stagesFlow.find(s => s.id === id)?.next;
+    return isTerminal ? l.reverse() : l;
   };
   const counts = {};
-  STAGES.forEach(s => { counts[s.id] = orders.filter(o => o.status === s.id).length; });
+  stagesRaw.forEach(s => { counts[s.id] = orders.filter(o => o.status === s.id).length; });
   const lateCount = orders.filter(isOverdue).length;
-  const shown = STAGES.filter(s => fStage === "todos" || fStage === s.id).reduce((n, s) => n + stageList(s.id).length, 0);
+  const shown = stagesRaw.filter(s => fStage === "todos" || fStage === s.id).reduce((n, s) => n + stageList(s.id).length, 0);
   const detailOrder = detailId ? orders.find(o => o.id === detailId) : null;
 
   if (loading) return <div className="center"><div className="spin"></div><p style={{ color: "var(--muted)" }}>Conectando ao Firebase…</p></div>;
@@ -509,7 +547,8 @@ function App() {
   );
 
   return (
-    <>
+    <StagesCtx.Provider value={stagesFlow}>
+
       <header className="top">
         <div className="brand">
           <div className="mono" aria-hidden="true">NP</div>
@@ -520,6 +559,7 @@ function App() {
         </div>
         <div className="actions">
           <span className={"sync" + (saving ? " busy" : "")}><i></i>{saving ? "Salvando…" : "Sincronizado"}</span>
+          <button className="btn" onClick={() => setShowStages(true)} title="Gerenciar etapas"><Ic n="settings" /><span className="t-btn">Etapas</span></button>
           <button className="btn" onClick={() => setShowSum(true)} title="Resumo do dia"><Ic n="calendar" /><span className="t-btn">Resumo</span></button>
           <button className="btn" onClick={exportCSV} title="Exportar planilha (CSV)"><Ic n="sheet" /><span className="t-btn">Planilha</span></button>
           <button className="btn" onClick={exportPDF} title="Gerar relatório em PDF"><Ic n="file" /><span className="t-btn">Relatório PDF</span></button>
@@ -540,15 +580,15 @@ function App() {
               : <div className="ok-pill"><Ic n="check" />Nenhum pedido atrasado</div>}
           </div>
           {orders.length > 0 && (
-            <div className="bar" role="img" aria-label={STAGES.map(s => counts[s.id] + " " + s.label.toLowerCase()).join(", ")}>
-              {STAGES.filter(s => counts[s.id] > 0).map(s => <i key={s.id} style={{ flex: counts[s.id], background: s.sw }}></i>)}
+            <div className="bar" role="img" aria-label={stagesRaw.map(s => counts[s.id] + " " + s.label.toLowerCase()).join(", ")}>
+              {stagesRaw.filter(s => counts[s.id] > 0).map(s => <i key={s.id} style={{ flex: counts[s.id], background: s.color }}></i>)}
             </div>
           )}
           <div className="legend">
             <button className="chip" aria-pressed={fStage === "todos"} onClick={() => setFStage("todos")}>Todos <b>{orders.length}</b></button>
-            {STAGES.map(s => (
+            {stagesRaw.map(s => (
               <button key={s.id} className="chip" aria-pressed={fStage === s.id} onClick={() => setFStage(fStage === s.id ? "todos" : s.id)}>
-                <span className="sw" style={{ background: s.sw }}></span>{s.label} <b>{counts[s.id]}</b>
+                <span className="sw" style={{ background: s.color }}></span>{s.label} <b>{counts[s.id]}</b>
               </button>
             ))}
           </div>
@@ -568,7 +608,7 @@ function App() {
         </div>
 
         <div className="board">
-          {STAGES.filter(s => fStage === "todos" || fStage === s.id).map(s => {
+          {stagesFlow.filter(s => fStage === "todos" || fStage === s.id).map(s => {
             const list = stageList(s.id);
             const v = sumVal(list);
             return (
@@ -590,6 +630,7 @@ function App() {
       </main>
 
       {showSum && <Overlay onClose={() => setShowSum(false)}><DailySummary orders={orders} onClose={() => setShowSum(false)} /></Overlay>}
+      {showStages && <Overlay onClose={() => setShowStages(false)}><StagesManager stages={stagesRaw} counts={counts} onClose={() => setShowStages(false)} onSave={saveStages} /></Overlay>}
 
       {(modal === "add" || modal === "edit") && (
         <Overlay onClose={() => setModal(null)}>
@@ -627,7 +668,7 @@ function App() {
       )}
 
       {toast && <div className={"toast" + (toast.type === "err" ? " err" : "")} role="status"><Ic n={toast.type === "err" ? "alert" : "check"} />{toast.msg}</div>}
-    </>
+    </StagesCtx.Provider>
   );
 }
 
@@ -663,7 +704,7 @@ function OrderCard({ o, stage, onOpen, onEdit, onDel, onNext, onPrev }) {
       {due && <div className={"due " + due.k}><Ic n={due.k === "late" ? "alert" : "calendar"} /><span>{due.t}</span>{due.r && <em>{due.r}</em>}</div>}
       {o.observacoes && <p className="obs">{tidy(o.observacoes)}</p>}
       <div className="c-act" onClick={stop}>
-        {stage.act ? <button className="btn sm" onClick={onNext}>{stage.act}</button> : <span></span>}
+        {stage.actText ? <button className="btn sm" onClick={onNext}>{stage.actText}</button> : <span></span>}
         <span className="ib">
           {stage.prev && <button onClick={onPrev} aria-label="Voltar etapa" title="Voltar etapa"><Ic n="back" /></button>}
           <button onClick={onEdit} aria-label="Editar pedido" title="Editar"><Ic n="pencil" /></button>
@@ -677,11 +718,12 @@ function OrderCard({ o, stage, onOpen, onEdit, onDel, onNext, onPrev }) {
 /* ---------- Detalhes ---------- */
 function DetailPanel({ o, onClose, onEdit, onDelete }) {
   const [tab, setTab] = useState("info");
+  const stages = useStages();
   const pr = PRIORITIES.find(p => p.id === o.prioridade);
   const due = dueInfo(o);
   const hist = [...(o.historico || [])].reverse();
   const rows = [
-    ["Etapa", stageLabel(o.status)],
+    ["Etapa", stageLabel(o.status, stages)],
     ["Prioridade", pr ? pr.label : "—"],
     ["Quantidade", o.quantidade ? Number(o.quantidade).toLocaleString("pt-BR") + " un." : "—"],
     ...(o.valorUnit ? [["Valor do produto", formatBRL(o.valorUnit) + " / un."]] : []),
@@ -800,7 +842,101 @@ function DailySummary({ orders, onClose }) {
 
 /* ---------- Formulário ---------- */
 function Field({ label, children }) { return <div className="f"><label>{label}</label>{children}</div>; }
+/* ---------- Gerenciar etapas ---------- */
+function StagesManager({ stages, counts, onClose, onSave }) {
+  const [list, setList] = useState(() => stages.map(s => ({ ...s })));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  function update(i, patch) { setList(l => l.map((s, idx) => idx === i ? { ...s, ...patch } : s)); }
+  function move(i, dir) {
+    setList(l => {
+      const j = i + dir;
+      if (j < 0 || j >= l.length) return l;
+      const n = [...l];
+      [n[i], n[j]] = [n[j], n[i]];
+      return n;
+    });
+  }
+  function addStage() {
+    const id = "etapa-" + Date.now().toString(36);
+    setList(l => [...l, { id, label: "Nova etapa", icon: "quote", color: STAGE_PALETTE[l.length % STAGE_PALETTE.length], actLabel: "" }]);
+  }
+  function removeStage(i) {
+    setList(l => l.filter((_, idx) => idx !== i));
+  }
+  async function save() {
+    if (list.length === 0) { setErr("É preciso ter pelo menos uma etapa."); return; }
+    if (list.some(s => !s.label.trim())) { setErr("Toda etapa precisa de um nome."); return; }
+    setErr("");
+    setSaving(true);
+    try { await onSave(list); onClose(); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="dlg" role="dialog" aria-modal="true" aria-label="Gerenciar etapas" style={{ width: 560 }}>
+      <div className="dlg-h">
+        <div>
+          <h2>Gerenciar etapas</h2>
+          <div className="sub">Renomeie, reordene ou crie etapas do seu fluxo de pedidos.</div>
+        </div>
+        <button className="x" onClick={onClose} aria-label="Fechar"><Ic n="x" /></button>
+      </div>
+      <div className="dlg-b">
+        {list.map((s, i) => {
+          const inUse = counts[s.id] || 0;
+          return (
+            <div key={s.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "10px 0", borderBottom: "1px solid var(--line)" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingTop: 6 }}>
+                <button onClick={() => move(i, -1)} disabled={i === 0} aria-label="Mover para cima" style={{ width: 24, height: 20, display: "grid", placeItems: "center", border: "0", background: "none", color: i === 0 ? "var(--line-strong)" : "var(--ink-2)", cursor: i === 0 ? "default" : "pointer" }}><Ic n="up" /></button>
+                <button onClick={() => move(i, 1)} disabled={i === list.length - 1} aria-label="Mover para baixo" style={{ width: 24, height: 20, display: "grid", placeItems: "center", border: "0", background: "none", color: i === list.length - 1 ? "var(--line-strong)" : "var(--ink-2)", cursor: i === list.length - 1 ? "default" : "pointer" }}><Ic n="down" /></button>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input className="inp" value={s.label} onChange={e => update(i, { label: e.target.value })} placeholder="Nome da etapa" style={{ flex: 1 }} />
+                  <button onClick={() => removeStage(i)} disabled={inUse > 0} title={inUse > 0 ? inUse + " pedido(s) nesta etapa" : "Excluir etapa"}
+                    style={{ width: 30, height: 30, flex: "none", display: "grid", placeItems: "center", border: "1px solid var(--line-strong)", borderRadius: 6, background: "var(--surface)", color: inUse > 0 ? "var(--line-strong)" : "var(--alert)", cursor: inUse > 0 ? "not-allowed" : "pointer" }}>
+                    <Ic n="trash" />
+                  </button>
+                </div>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>Ícone</span>
+                  {STAGE_ICONS.map(ic => (
+                    <button key={ic} onClick={() => update(i, { icon: ic })} aria-label={ic}
+                      style={{ width: 26, height: 26, display: "grid", placeItems: "center", borderRadius: 6, border: s.icon === ic ? "2px solid var(--ink)" : "1px solid var(--line)", background: "var(--surface)", color: "var(--ink-2)", cursor: "pointer" }}>
+                      <Ic n={ic} />
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>Cor</span>
+                  {STAGE_PALETTE.map(c => (
+                    <button key={c} onClick={() => update(i, { color: c })} aria-label={c}
+                      style={{ width: 20, height: 20, borderRadius: "50%", background: c, border: s.color === c ? "2px solid var(--ink)" : "1px solid var(--line)", cursor: "pointer" }}></button>
+                  ))}
+                </div>
+                <input className="inp" value={s.actLabel || ""} onChange={e => update(i, { actLabel: e.target.value })}
+                  placeholder={i < list.length - 1 ? 'Texto do botão (opcional) · padrão: "Avançar para ' + (list[i + 1] ? list[i + 1].label : "…") + '"' : "Última etapa — sem botão de avançar"}
+                  style={{ marginTop: 8 }} disabled={i === list.length - 1} />
+                {inUse > 0 && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>{inUse} pedido{inUse > 1 ? "s" : ""} nesta etapa — mova-os antes de excluir.</div>}
+              </div>
+            </div>
+          );
+        })}
+        <button className="btn" onClick={addStage} style={{ marginTop: 12 }}><Ic n="plus" />Nova etapa</button>
+        {err && <p style={{ color: "var(--alert)", fontSize: 13, marginTop: 10 }}>{err}</p>}
+      </div>
+      <div className="dlg-f">
+        <button className="btn" onClick={onClose}>Cancelar</button>
+        <button className="btn primary" onClick={save} disabled={saving}>{saving ? "Salvando…" : "Salvar etapas"}</button>
+      </div>
+    </div>
+  );
+}
+
 function FormBody({ form, setForm }) {
+  const stages = useStages();
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   function setQuantidade(v) {
     setForm(f => {
@@ -850,8 +986,8 @@ function FormBody({ form, setForm }) {
       </div>
       <div className="row2">
         <Field label="Etapa">
-          <select className="inp" value={form.status || "proposta"} onChange={e => set("status", e.target.value)}>
-            {STAGES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+          <select className="inp" value={form.status || (stages[0] || {}).id || ""} onChange={e => set("status", e.target.value)}>
+            {stages.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
         </Field>
         <Field label="Prioridade">
