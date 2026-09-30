@@ -212,6 +212,31 @@ const STAGE_PALETTE = ["#C9B27C", "#94A0B6", "#6B7AA1", "#48577E", "#14213D", "#
 const STAGE_ICONS = ["quote", "clock", "printer", "truck", "check", "file", "package", "alert", "user", "calendar"];
 const StagesCtx = React.createContext([]);
 function useStages() { return React.useContext(StagesCtx); }
+
+/* ---------- Configuração de campos ---------- */
+const DEFAULT_FIELDS = [
+  { key:"numero",      label:"Nº do processo ou licitação", type:"text",     visible:true },
+  { key:"quantidade",  label:"Quantidade",                  type:"number",   visible:true },
+  { key:"valorUnit",   label:"Valor do produto (R$)",        type:"number",   visible:true },
+  { key:"valor",       label:"Valor da licitação (R$)",       type:"number",   visible:true },
+  { key:"custo",       label:"Custo de produção (R$)",        type:"number",   visible:true },
+  { key:"frete",       label:"Frete (R$)",                    type:"number",   visible:true },
+  { key:"despesas",    label:"Outras despesas (R$)",          type:"number",   visible:true },
+  { key:"prazo",       label:"Prazo de entrega",              type:"date",     visible:true },
+  { key:"responsavel", label:"Responsável ou fornecedor",     type:"text",     visible:true },
+  { key:"prioridade",  label:"Prioridade",                    type:"select",   visible:true },
+  { key:"observacoes", label:"Observações",                   type:"textarea", visible:true },
+];
+const FIELD_TYPES = [
+  { id:"text",     label:"Texto curto" },
+  { id:"textarea", label:"Texto longo" },
+  { id:"number",   label:"Número" },
+  { id:"date",     label:"Data" },
+];
+const FieldsCtx = React.createContext(DEFAULT_FIELDS);
+function useFields() { return React.useContext(FieldsCtx); }
+function fieldLabel(key, fields, fallback) { const f = (fields || DEFAULT_FIELDS).find(x => x.key === key); return f ? f.label : (fallback || key); }
+function fieldVisible(key, fields) { const f = (fields || DEFAULT_FIELDS).find(x => x.key === key); return f ? f.visible !== false : true; }
 const PRIORITIES = [
   { id:"urgente", label:"Urgente" },
   { id:"alta",    label:"Alta" },
@@ -242,6 +267,7 @@ const ICONS = {
   settings:<><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></>,
   up:<polyline points="18 15 12 9 6 15"/>,
   down:<polyline points="6 9 12 15 18 9"/>,
+  layout:<><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></>,
 };
 function Ic({ n }) {
   return <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">{ICONS[n]}</svg>;
@@ -320,6 +346,8 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [stagesRaw, setStagesRaw] = useState(DEFAULT_STAGES);
   const [showStages, setShowStages] = useState(false);
+  const [fieldsRaw, setFieldsRaw] = useState(DEFAULT_FIELDS);
+  const [showFields, setShowFields] = useState(false);
   const fileRef = useRef(null);
 
   const stagesFlow = React.useMemo(() => stagesRaw.map((s, i) => ({
@@ -360,6 +388,27 @@ function App() {
   }
 
   useEffect(() => {
+    if (!IS_CFG) return;
+    const unsub = db.collection("config").doc("fields").onSnapshot(
+      doc => {
+        if (doc.exists && Array.isArray(doc.data().list) && doc.data().list.length) {
+          setFieldsRaw(doc.data().list);
+        } else {
+          setFieldsRaw(DEFAULT_FIELDS);
+          db.collection("config").doc("fields").set({ list: DEFAULT_FIELDS, updatedAt: new Date().toISOString() }).catch(() => {});
+        }
+      },
+      () => setFieldsRaw(DEFAULT_FIELDS)
+    );
+    return unsub;
+  }, []);
+
+  async function saveFields(list) {
+    await db.collection("config").doc("fields").set({ list, updatedAt: new Date().toISOString() });
+    flash("Campos atualizados.");
+  }
+
+  useEffect(() => {
     if (loading || connErr) return;
     try {
       if (localStorage.getItem("lt-summary") !== todayStr()) {
@@ -385,7 +434,7 @@ function App() {
   }
 
   function openAdd() {
-    setForm({ numero: "", cliente: "", descricao: "", quantidade: "", valorUnit: "", valor: "", custo: "", frete: "", despesas: "", prazo: "", status: (stagesRaw[0] || {}).id || "proposta", prioridade: "media", responsavel: "", observacoes: "" });
+    setForm({ numero: "", cliente: "", descricao: "", quantidade: "", valorUnit: "", valor: "", custo: "", frete: "", despesas: "", prazo: "", status: (stagesRaw[0] || {}).id || "proposta", prioridade: "media", responsavel: "", observacoes: "", extras: {} });
     setModal("add");
   }
   function openEdit(o) { setForm({ ...o }); setModal("edit"); }
@@ -428,14 +477,20 @@ function App() {
   }
 
   function exportCSV() {
-    const h = ["ID", "Nº Processo", "Cliente", "Descrição", "Qtd", "Valor do produto (R$)", "Valor (R$)", "Custo (R$)", "Frete (R$)", "Outras despesas (R$)", "Lucro (R$)", "Margem (%)", "Prazo", "Etapa", "Prioridade", "Responsável", "Observações", "Criado em"];
+    const customFields = fieldsRaw.filter(f => !DEFAULT_FIELDS.some(d => d.key === f.key));
+    const h = ["ID", fieldLabel("numero", fieldsRaw), "Cliente", "Descrição", fieldLabel("quantidade", fieldsRaw),
+      fieldLabel("valorUnit", fieldsRaw), fieldLabel("valor", fieldsRaw), fieldLabel("custo", fieldsRaw), fieldLabel("frete", fieldsRaw),
+      fieldLabel("despesas", fieldsRaw), "Lucro (R$)", "Margem (%)", fieldLabel("prazo", fieldsRaw), "Etapa",
+      fieldLabel("prioridade", fieldsRaw), fieldLabel("responsavel", fieldsRaw), fieldLabel("observacoes", fieldsRaw), "Criado em",
+      ...customFields.map(f => f.label)];
     const rows = orders.map(o => [
       o.id, o.numero || "", o.cliente, o.descricao, o.quantidade || "", o.valorUnit || "", o.valor || "",
       o.custo || "", o.frete || "", o.despesas || "",
       hasCusto(o) ? lucro(o).toFixed(2) : "", hasCusto(o) && margem(o) !== null ? margem(o).toFixed(1) : "",
       o.prazo ? formatDate(o.prazo) : "", stageLabel(o.status, stagesRaw),
       (PRIORITIES.find(p => p.id === o.prioridade) || {}).label || o.prioridade || "",
-      o.responsavel || "", o.observacoes || "", o.criadoEm ? new Date(o.criadoEm).toLocaleDateString("pt-BR") : ""
+      o.responsavel || "", o.observacoes || "", o.criadoEm ? new Date(o.criadoEm).toLocaleDateString("pt-BR") : "",
+      ...customFields.map(f => (o.extras && o.extras[f.key]) || "")
     ].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(","));
     download(new Blob(["\uFEFF" + [h.join(","), ...rows].join("\n")], { type: "text/csv;charset=utf-8;" }), "pedidos-" + todayStr() + ".csv");
     flash("Planilha exportada.");
@@ -548,6 +603,7 @@ function App() {
 
   return (
     <StagesCtx.Provider value={stagesFlow}>
+    <FieldsCtx.Provider value={fieldsRaw}>
 
       <header className="top">
         <div className="brand">
@@ -560,6 +616,7 @@ function App() {
         <div className="actions">
           <span className={"sync" + (saving ? " busy" : "")}><i></i>{saving ? "Salvando…" : "Sincronizado"}</span>
           <button className="btn" onClick={() => setShowStages(true)} title="Gerenciar etapas"><Ic n="settings" /><span className="t-btn">Etapas</span></button>
+          <button className="btn" onClick={() => setShowFields(true)} title="Gerenciar campos"><Ic n="layout" /><span className="t-btn">Campos</span></button>
           <button className="btn" onClick={() => setShowSum(true)} title="Resumo do dia"><Ic n="calendar" /><span className="t-btn">Resumo</span></button>
           <button className="btn" onClick={exportCSV} title="Exportar planilha (CSV)"><Ic n="sheet" /><span className="t-btn">Planilha</span></button>
           <button className="btn" onClick={exportPDF} title="Gerar relatório em PDF"><Ic n="file" /><span className="t-btn">Relatório PDF</span></button>
@@ -631,6 +688,7 @@ function App() {
 
       {showSum && <Overlay onClose={() => setShowSum(false)}><DailySummary orders={orders} onClose={() => setShowSum(false)} /></Overlay>}
       {showStages && <Overlay onClose={() => setShowStages(false)}><StagesManager stages={stagesRaw} counts={counts} onClose={() => setShowStages(false)} onSave={saveStages} /></Overlay>}
+      {showFields && <Overlay onClose={() => setShowFields(false)}><FieldsManager fields={fieldsRaw} onClose={() => setShowFields(false)} onSave={saveFields} /></Overlay>}
 
       {(modal === "add" || modal === "edit") && (
         <Overlay onClose={() => setModal(null)}>
@@ -668,15 +726,18 @@ function App() {
       )}
 
       {toast && <div className={"toast" + (toast.type === "err" ? " err" : "")} role="status"><Ic n={toast.type === "err" ? "alert" : "check"} />{toast.msg}</div>}
+    </FieldsCtx.Provider>
     </StagesCtx.Provider>
   );
 }
 
 /* ---------- Cartão do pedido ---------- */
 function OrderCard({ o, stage, onOpen, onEdit, onDel, onNext, onPrev }) {
+  const fields = useFields();
   const late = isOverdue(o);
   const due = dueInfo(o);
   const stop = e => e.stopPropagation();
+  const customFields = fields.filter(f => !DEFAULT_FIELDS.some(d => d.key === f.key) && o.extras && o.extras[f.key]);
   return (
     <article className={"card" + (late ? " is-late" : "")} onClick={onOpen} tabIndex={0}
       onKeyDown={e => { if (e.key === "Enter" && e.target === e.currentTarget) onOpen(); }}>
@@ -701,6 +762,7 @@ function OrderCard({ o, stage, onOpen, onEdit, onDel, onNext, onPrev }) {
         </div>
       )}
       {o.responsavel && <div className="meta"><span><Ic n="user" />{o.responsavel}</span></div>}
+      {customFields.map(f => <div className="meta" key={f.key}><span>{f.label}: {o.extras[f.key]}</span></div>)}
       {due && <div className={"due " + due.k}><Ic n={due.k === "late" ? "alert" : "calendar"} /><span>{due.t}</span>{due.r && <em>{due.r}</em>}</div>}
       {o.observacoes && <p className="obs">{tidy(o.observacoes)}</p>}
       <div className="c-act" onClick={stop}>
@@ -719,24 +781,27 @@ function OrderCard({ o, stage, onOpen, onEdit, onDel, onNext, onPrev }) {
 function DetailPanel({ o, onClose, onEdit, onDelete }) {
   const [tab, setTab] = useState("info");
   const stages = useStages();
+  const fields = useFields();
   const pr = PRIORITIES.find(p => p.id === o.prioridade);
   const due = dueInfo(o);
   const hist = [...(o.historico || [])].reverse();
+  const customFields = fields.filter(f => !DEFAULT_FIELDS.some(d => d.key === f.key) && o.extras && o.extras[f.key]);
   const rows = [
     ["Etapa", stageLabel(o.status, stages)],
-    ["Prioridade", pr ? pr.label : "—"],
-    ["Quantidade", o.quantidade ? Number(o.quantidade).toLocaleString("pt-BR") + " un." : "—"],
-    ...(o.valorUnit ? [["Valor do produto", formatBRL(o.valorUnit) + " / un."]] : []),
-    ["Valor", o.valor ? formatBRL(o.valor) : "—"],
+    [fieldLabel("prioridade", fields), pr ? pr.label : "—"],
+    [fieldLabel("quantidade", fields), o.quantidade ? Number(o.quantidade).toLocaleString("pt-BR") + " un." : "—"],
+    ...(o.valorUnit ? [[fieldLabel("valorUnit", fields), formatBRL(o.valorUnit) + " / un."]] : []),
+    [fieldLabel("valor", fields), o.valor ? formatBRL(o.valor) : "—"],
     ...(hasCusto(o) ? [
-      ["Custo de produção", formatBRL(o.custo)],
-      ["Frete", o.frete ? formatBRL(o.frete) : "—"],
-      ["Outras despesas", o.despesas ? formatBRL(o.despesas) : "—"],
+      [fieldLabel("custo", fields), formatBRL(o.custo)],
+      [fieldLabel("frete", fields), o.frete ? formatBRL(o.frete) : "—"],
+      [fieldLabel("despesas", fields), o.despesas ? formatBRL(o.despesas) : "—"],
       ["Lucro", formatBRL(lucro(o)) + (margem(o) !== null ? " (" + margem(o).toFixed(1) + "%)" : ""), lucro(o) < 0],
     ] : []),
-    ["Prazo", due ? due.t + (due.r ? " (" + due.r + ")" : "") : "—", due && due.k === "late"],
-    ["Responsável", o.responsavel || "—"],
-    ["Observações", o.observacoes || "—"],
+    [fieldLabel("prazo", fields), due ? due.t + (due.r ? " (" + due.r + ")" : "") : "—", due && due.k === "late"],
+    [fieldLabel("responsavel", fields), o.responsavel || "—"],
+    [fieldLabel("observacoes", fields), o.observacoes || "—"],
+    ...customFields.map(f => [f.label, o.extras[f.key]]),
     ["Criado em", formatDT(o.criadoEm)],
   ];
   return (
@@ -935,9 +1000,92 @@ function StagesManager({ stages, counts, onClose, onSave }) {
   );
 }
 
+/* ---------- Gerenciar campos ---------- */
+function FieldsManager({ fields, onClose, onSave }) {
+  const [list, setList] = useState(() => fields.map(f => ({ ...f })));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  function update(i, patch) { setList(l => l.map((f, idx) => idx === i ? { ...f, ...patch } : f)); }
+  function move(i, dir) {
+    setList(l => {
+      const j = i + dir;
+      if (j < 0 || j >= l.length) return l;
+      const n = [...l];
+      [n[i], n[j]] = [n[j], n[i]];
+      return n;
+    });
+  }
+  function addField() {
+    const key = "extra-" + Date.now().toString(36);
+    setList(l => [...l, { key, label: "Novo campo", type: "text", visible: true }]);
+  }
+  function removeField(i) { setList(l => l.filter((_, idx) => idx !== i)); }
+  async function save() {
+    if (list.some(f => !f.label.trim())) { setErr("Todo campo precisa de um nome."); return; }
+    setErr("");
+    setSaving(true);
+    try { await onSave(list); onClose(); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="dlg" role="dialog" aria-modal="true" aria-label="Gerenciar campos" style={{ width: 560 }}>
+      <div className="dlg-h">
+        <div>
+          <h2>Gerenciar campos</h2>
+          <div className="sub">Renomeie, esconda, reordene ou crie campos do formulário de pedido. Cliente, Descrição e Etapa não aparecem aqui porque o sistema precisa deles sempre.</div>
+        </div>
+        <button className="x" onClick={onClose} aria-label="Fechar"><Ic n="x" /></button>
+      </div>
+      <div className="dlg-b">
+        {list.map((f, i) => {
+          const isCustom = !DEFAULT_FIELDS.some(d => d.key === f.key);
+          return (
+            <div key={f.key} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "10px 0", borderBottom: "1px solid var(--line)" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingTop: 6 }}>
+                <button onClick={() => move(i, -1)} disabled={i === 0} aria-label="Mover para cima" style={{ width: 24, height: 20, display: "grid", placeItems: "center", border: "0", background: "none", color: i === 0 ? "var(--line-strong)" : "var(--ink-2)", cursor: i === 0 ? "default" : "pointer" }}><Ic n="up" /></button>
+                <button onClick={() => move(i, 1)} disabled={i === list.length - 1} aria-label="Mover para baixo" style={{ width: 24, height: 20, display: "grid", placeItems: "center", border: "0", background: "none", color: i === list.length - 1 ? "var(--line-strong)" : "var(--ink-2)", cursor: i === list.length - 1 ? "default" : "pointer" }}><Ic n="down" /></button>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input className="inp" value={f.label} onChange={e => update(i, { label: e.target.value })} placeholder="Nome do campo" style={{ flex: 1 }} />
+                  <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: "var(--ink-2)", flex: "none", whiteSpace: "nowrap" }}>
+                    <input type="checkbox" checked={f.visible !== false} onChange={e => update(i, { visible: e.target.checked })} />
+                    Visível
+                  </label>
+                  {isCustom
+                    ? <select className="inp" value={f.type} onChange={e => update(i, { type: e.target.value })} style={{ flex: "none", width: 120 }}>
+                        {FIELD_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                      </select>
+                    : <span style={{ fontSize: 12, color: "var(--muted)", flex: "none", width: 90 }}>{f.key === "prioridade" ? "lista fixa" : (FIELD_TYPES.find(t => t.id === f.type) || {}).label}</span>}
+                  {isCustom && (
+                    <button onClick={() => removeField(i)} title="Excluir campo"
+                      style={{ width: 30, height: 30, flex: "none", display: "grid", placeItems: "center", border: "1px solid var(--line-strong)", borderRadius: 6, background: "var(--surface)", color: "var(--alert)", cursor: "pointer" }}>
+                      <Ic n="trash" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        <button className="btn" onClick={addField} style={{ marginTop: 12 }}><Ic n="plus" />Novo campo</button>
+        {err && <p style={{ color: "var(--alert)", fontSize: 13, marginTop: 10 }}>{err}</p>}
+      </div>
+      <div className="dlg-f">
+        <button className="btn" onClick={onClose}>Cancelar</button>
+        <button className="btn primary" onClick={save} disabled={saving}>{saving ? "Salvando…" : "Salvar campos"}</button>
+      </div>
+    </div>
+  );
+}
+
 function FormBody({ form, setForm }) {
   const stages = useStages();
+  const fields = useFields();
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  function setExtra(k, v) { setForm(f => ({ ...f, extras: { ...(f.extras || {}), [k]: v } })); }
   function setQuantidade(v) {
     setForm(f => {
       const next = { ...f, quantidade: v };
@@ -954,49 +1102,54 @@ function FormBody({ form, setForm }) {
       return next;
     });
   }
-  return (
-    <div className="form">
-      <Field label="Nº do processo ou licitação"><input className="inp" value={form.numero || ""} onChange={e => set("numero", e.target.value)} placeholder="Ex.: 60893/2025" /></Field>
-      <Field label="Cliente ou órgão público *"><input className="inp" value={form.cliente || ""} onChange={e => set("cliente", e.target.value)} placeholder="Nome do cliente ou secretaria" /></Field>
-      <Field label="Descrição do item ou lote *"><textarea className="inp" rows={3} value={form.descricao || ""} onChange={e => set("descricao", e.target.value)} placeholder="Descreva o pedido ou lote" /></Field>
-      <div className="row2">
-        <Field label="Quantidade"><input className="inp" type="number" value={form.quantidade || ""} onChange={e => setQuantidade(e.target.value)} placeholder="0" /></Field>
-        <Field label="Valor do produto (R$)"><input className="inp" type="number" step="0.01" value={form.valorUnit || ""} onChange={e => setValorUnit(e.target.value)} placeholder="Opcional · por unidade" /></Field>
-      </div>
-      <div className="row2">
-        <Field label="Valor da licitação (R$)"><input className="inp" type="number" step="0.01" value={form.valor || ""} onChange={e => set("valor", e.target.value)} placeholder="0,00" /></Field>
-        <Field label="Custo de produção (R$)"><input className="inp" type="number" step="0.01" value={form.custo || ""} onChange={e => set("custo", e.target.value)} placeholder="Opcional" /></Field>
-      </div>
-      <div className="row2">
-        <Field label="Frete (R$)"><input className="inp" type="number" step="0.01" value={form.frete || ""} onChange={e => set("frete", e.target.value)} placeholder="Opcional" /></Field>
-        <Field label="Outras despesas (R$)"><input className="inp" type="number" step="0.01" value={form.despesas || ""} onChange={e => set("despesas", e.target.value)} placeholder="Opcional" /></Field>
-      </div>
-      {hasCusto(form) && (
-        <div className="row2">
-          <Field label="Lucro estimado">
-            <div className="inp" style={{ background: "var(--col)", color: lucro(form) < 0 ? "var(--alert)" : "var(--ok)", fontWeight: 600, display: "flex", alignItems: "center" }}>
-              {formatBRL(lucro(form))}{margem(form) !== null ? " · " + margem(form).toFixed(1) + "%" : ""}
-            </div>
-          </Field>
-        </div>
-      )}
-      <div className="row2">
-        <Field label="Prazo de entrega"><input className="inp" type="date" value={form.prazo || ""} onChange={e => set("prazo", e.target.value)} /></Field>
-        <Field label="Responsável ou fornecedor"><input className="inp" value={form.responsavel || ""} onChange={e => set("responsavel", e.target.value)} placeholder="Quem está produzindo" /></Field>
-      </div>
-      <div className="row2">
-        <Field label="Etapa">
-          <select className="inp" value={form.status || (stages[0] || {}).id || ""} onChange={e => set("status", e.target.value)}>
-            {stages.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </select>
-        </Field>
-        <Field label="Prioridade">
+
+  function renderField(f) {
+    const isCustom = !DEFAULT_FIELDS.some(d => d.key === f.key);
+    if (isCustom) {
+      const v = (form.extras || {})[f.key] || "";
+      const onCh = e => setExtra(f.key, e.target.value);
+      if (f.type === "textarea") return <Field key={f.key} label={f.label}><textarea className="inp" rows={2} value={v} onChange={onCh} /></Field>;
+      return <Field key={f.key} label={f.label}><input className="inp" type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"} value={v} onChange={onCh} /></Field>;
+    }
+    switch (f.key) {
+      case "quantidade": return <Field key={f.key} label={f.label}><input className="inp" type="number" value={form.quantidade || ""} onChange={e => setQuantidade(e.target.value)} placeholder="0" /></Field>;
+      case "valorUnit": return <Field key={f.key} label={f.label}><input className="inp" type="number" step="0.01" value={form.valorUnit || ""} onChange={e => setValorUnit(e.target.value)} placeholder="Opcional · por unidade" /></Field>;
+      case "valor": return <Field key={f.key} label={f.label}><input className="inp" type="number" step="0.01" value={form.valor || ""} onChange={e => set("valor", e.target.value)} placeholder="0,00" /></Field>;
+      case "custo": return <Field key={f.key} label={f.label}><input className="inp" type="number" step="0.01" value={form.custo || ""} onChange={e => set("custo", e.target.value)} placeholder="Opcional" /></Field>;
+      case "frete": return <Field key={f.key} label={f.label}><input className="inp" type="number" step="0.01" value={form.frete || ""} onChange={e => set("frete", e.target.value)} placeholder="Opcional" /></Field>;
+      case "despesas": return <Field key={f.key} label={f.label}><input className="inp" type="number" step="0.01" value={form.despesas || ""} onChange={e => set("despesas", e.target.value)} placeholder="Opcional" /></Field>;
+      case "prazo": return <Field key={f.key} label={f.label}><input className="inp" type="date" value={form.prazo || ""} onChange={e => set("prazo", e.target.value)} /></Field>;
+      case "responsavel": return <Field key={f.key} label={f.label}><input className="inp" value={form.responsavel || ""} onChange={e => set("responsavel", e.target.value)} placeholder="Quem está produzindo" /></Field>;
+      case "numero": return <Field key={f.key} label={f.label}><input className="inp" value={form.numero || ""} onChange={e => set("numero", e.target.value)} placeholder="Ex.: 60893/2025" /></Field>;
+      case "observacoes": return <Field key={f.key} label={f.label}><textarea className="inp" rows={2} value={form.observacoes || ""} onChange={e => set("observacoes", e.target.value)} placeholder="Anotações importantes" /></Field>;
+      case "prioridade": return (
+        <Field key={f.key} label={f.label}>
           <select className="inp" value={form.prioridade || "media"} onChange={e => set("prioridade", e.target.value)}>
             {PRIORITIES.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
         </Field>
-      </div>
-      <Field label="Observações"><textarea className="inp" rows={2} value={form.observacoes || ""} onChange={e => set("observacoes", e.target.value)} placeholder="Anotações importantes" /></Field>
+      );
+      default: return null;
+    }
+  }
+
+  return (
+    <div className="form">
+      <Field label="Cliente ou órgão público *"><input className="inp" value={form.cliente || ""} onChange={e => set("cliente", e.target.value)} placeholder="Nome do cliente ou secretaria" /></Field>
+      <Field label="Descrição do item ou lote *"><textarea className="inp" rows={3} value={form.descricao || ""} onChange={e => set("descricao", e.target.value)} placeholder="Descreva o pedido ou lote" /></Field>
+      {fields.filter(f => f.visible !== false).map(renderField)}
+      {hasCusto(form) && (
+        <Field label="Lucro estimado">
+          <div className="inp" style={{ background: "var(--col)", color: lucro(form) < 0 ? "var(--alert)" : "var(--ok)", fontWeight: 600, display: "flex", alignItems: "center" }}>
+            {formatBRL(lucro(form))}{margem(form) !== null ? " · " + margem(form).toFixed(1) + "%" : ""}
+          </div>
+        </Field>
+      )}
+      <Field label="Etapa">
+        <select className="inp" value={form.status || (stages[0] || {}).id || ""} onChange={e => set("status", e.target.value)}>
+          {stages.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+        </select>
+      </Field>
     </div>
   );
 }
